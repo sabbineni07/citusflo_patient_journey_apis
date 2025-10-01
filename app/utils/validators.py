@@ -44,8 +44,17 @@ def validate_user_data(data):
         errors.append('Last name must be at least 2 characters long')
     
     # Role validation
-    if data.get('role') and data['role'] not in ['user', 'admin', 'doctor']:
-        errors.append('Role must be one of: user, admin, doctor')
+    if data.get('role') and data['role'] not in ['user', 'admin', 'doctor', 'nurse']:
+        errors.append('Role must be one of: user, admin, doctor, nurse')
+    
+    # Facility ID validation
+    if data.get('facility_id'):
+        facility_id = data['facility_id']
+        if facility_id and str(facility_id).strip():
+            try:
+                int(facility_id)  # Validate it can be converted to integer
+            except (ValueError, TypeError):
+                errors.append('Facility ID must be a valid integer')
     
     return errors
 
@@ -107,5 +116,14 @@ def validate_patient_data(data, is_update=False):
     for field in boolean_fields:
         if data.get(field) is not None and not isinstance(data[field], bool):
             errors.append(f'{field} must be a boolean value')
+    
+    # Facility ID validation
+    if data.get('facility_id'):
+        facility_id = data['facility_id']
+        if facility_id and str(facility_id).strip():
+            try:
+                int(facility_id)  # Validate it can be converted to integer
+            except (ValueError, TypeError):
+                errors.append('Facility ID must be a valid integer')
     
     return errors

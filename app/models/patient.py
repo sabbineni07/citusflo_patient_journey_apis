@@ -8,6 +8,7 @@ class Patient(db.Model):
     case_manager_name = db.Column(db.String(100), nullable=False)
     phone_number = db.Column(db.String(20), nullable=False)
     facility_name = db.Column(db.String(100), nullable=False)
+    facility_id = db.Column(db.Integer, db.ForeignKey('facilities.id'), nullable=True)
     patient_name = db.Column(db.String(100), nullable=False)
     date = db.Column(db.Date, nullable=False)
     referral_received = db.Column(db.Boolean, default=False)
@@ -22,13 +23,18 @@ class Patient(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
+    # Relationship with facility
+    facility = db.relationship('Facility', lazy=True)
+    
     def to_dict(self):
         """Convert patient to dictionary"""
         return {
-            'id': self.id,
+            'id': str(self.id),
             'caseManagerName': self.case_manager_name,
             'phoneNumber': self.phone_number,
             'facilityName': self.facility_name,
+            'facility_id': self.facility_id,
+            'facility_name_from_relation': self.facility_ref.name if self.facility_ref else None,
             'patientName': self.patient_name,
             'date': self.date.isoformat() if self.date else None,
             'referralReceived': self.referral_received,

@@ -10,13 +10,17 @@ class User(db.Model):
     password_hash = db.Column(db.String(128), nullable=False)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
-    role = db.Column(db.String(20), default='user')  # user, admin, doctor
+    role = db.Column(db.String(20), default='user')  # user, admin, doctor, nurse
+    facility_id = db.Column(db.Integer, db.ForeignKey('facilities.id'), nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationship with patients
     patients = db.relationship('Patient', backref='created_by_user', lazy=True)
+    
+    # Relationship with facility
+    facility = db.relationship('Facility', backref='users', lazy=True)
     
     def set_password(self, password):
         """Hash and set the password"""
@@ -29,12 +33,14 @@ class User(db.Model):
     def to_dict(self):
         """Convert user to dictionary"""
         return {
-            'id': self.id,
+            'id': str(self.id),
             'username': self.username,
             'email': self.email,
             'first_name': self.first_name,
             'last_name': self.last_name,
             'role': self.role,
+            'facility_id': self.facility_id,
+            'facility_name': self.facility.name if self.facility else None,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()

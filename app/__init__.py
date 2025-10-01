@@ -44,10 +44,12 @@ def create_app():
     from app.routes.auth import auth_bp
     from app.routes.patients import patients_bp
     from app.routes.case_manager_records import case_manager_records_bp
+    from app.routes.facilities import facilities_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(patients_bp, url_prefix='/api/patients')
     app.register_blueprint(case_manager_records_bp, url_prefix='/api/case-manager-records')
+    app.register_blueprint(facilities_bp, url_prefix='/api/facilities')
     
     # Health check endpoint
     @app.route('/health')

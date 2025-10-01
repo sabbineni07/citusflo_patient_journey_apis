@@ -26,9 +26,16 @@ def get_case_manager_records():
         search = request.args.get('search', '')
         date_from = request.args.get('date_from')
         date_to = request.args.get('date_to')
+        facility_id = request.args.get('facility_id')
         
         # Build query
         query = Patient.query
+        
+        # Filter by facility if specified (admin can see all, users see only their facility)
+        if user.role != 'admin' and user.facility_id:
+            query = query.filter(Patient.facility_id == user.facility_id)
+        elif facility_id:
+            query = query.filter(Patient.facility_id == int(facility_id))
         
         # Apply search filter
         if search:
@@ -64,15 +71,19 @@ def get_case_manager_records():
         patients = query.order_by(Patient.created_at.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         ).items
+
+        print(patients)
         
         # Transform to case manager records format
         records = []
         for patient in patients:
             record = {
-                'id': patient.id,
+                'id': str(patient.id),
                 'caseManagerName': patient.case_manager_name,
                 'phoneNumber': patient.phone_number,
                 'facilityName': patient.facility_name,
+                'facility_id': str(patient.facility_id) if patient.facility_id else None,
+                'facility': patient.facility.to_dict() if patient.facility else None,
                 'patientName': patient.patient_name,
                 'date': patient.date.isoformat() if patient.date else None,
                 'referralReceived': patient.referral_received,
@@ -116,10 +127,11 @@ def get_case_manager_record(record_id):
             return jsonify({'error': 'Record not found'}), 404
         
         record = {
-            'id': patient.id,
+            'id': str(patient.id),
             'caseManagerName': patient.case_manager_name,
             'phoneNumber': patient.phone_number,
             'facilityName': patient.facility_name,
+            'facility_id': patient.facility_id,
             'patientName': patient.patient_name,
             'date': patient.date.isoformat() if patient.date else None,
             'referralReceived': patient.referral_received,
@@ -155,9 +167,16 @@ def get_case_manager_stats():
         # Get date filters
         date_from = request.args.get('date_from')
         date_to = request.args.get('date_to')
+        facility_id = request.args.get('facility_id')
         
         # Build base query
         query = Patient.query
+        
+        # Filter by facility if specified (admin can see all, users see only their facility)
+        if user.role != 'admin' and user.facility_id:
+            query = query.filter(Patient.facility_id == user.facility_id)
+        elif facility_id:
+            query = query.filter(Patient.facility_id == int(facility_id))
         
         # Apply date filters
         if date_from:

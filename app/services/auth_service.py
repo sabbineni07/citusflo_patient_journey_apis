@@ -1,5 +1,6 @@
 from app import db
 from app.models.user import User
+from app.models.facility import Facility
 from datetime import datetime
 
 class AuthService:
@@ -7,12 +8,35 @@ class AuthService:
     
     def create_user(self, user_data):
         """Create a new user"""
+        # Handle facility creation/assignment
+        facility_id = user_data.get('facility_id')
+        facility_name = user_data.get('facility_name')
+        
+        # If facility_name is provided, get or create the facility
+        if facility_name:
+            facility = Facility.get_or_create(
+                name=facility_name,
+                address=user_data.get('facility_address'),
+                phone=user_data.get('facility_phone')
+            )
+            facility_id = facility.id
+        elif facility_id and str(facility_id).strip():
+            # Handle facility_id conversion if provided
+            try:
+                facility_id = int(facility_id)
+            except (ValueError, TypeError):
+                facility_id = None
+        else:
+            facility_id = None
+            
         user = User(
             username=user_data['username'],
             email=user_data['email'],
             first_name=user_data['first_name'],
             last_name=user_data['last_name'],
-            role=user_data.get('role', 'user')
+            role=user_data.get('role', 'user'),
+            facility_id=facility_id,
+            is_active=user_data.get('is_active', True)
         )
         
         # Set password
@@ -47,9 +71,33 @@ class AuthService:
     
     def update_user(self, user, user_data):
         """Update user information"""
+        # Handle facility updates
+        if 'facility_name' in user_data:
+            facility_name = user_data['facility_name']
+            if facility_name:
+                facility = Facility.get_or_create(
+                    name=facility_name,
+                    address=user_data.get('facility_address'),
+                    phone=user_data.get('facility_phone')
+                )
+                user.facility_id = facility.id
+            else:
+                user.facility_id = None
+        
+        # Handle other field updates
         for key, value in user_data.items():
-            if hasattr(user, key) and key not in ['id', 'created_at', 'updated_at']:
-                setattr(user, key, value)
+            if hasattr(user, key) and key not in ['id', 'created_at', 'updated_at', 'facility_name', 'facility_address', 'facility_phone']:
+                if key == 'facility_id':
+                    # Handle facility_id conversion
+                    if value and str(value).strip():
+                        try:
+                            setattr(user, key, int(value))
+                        except (ValueError, TypeError):
+                            setattr(user, key, None)
+                    else:
+                        setattr(user, key, None)
+                else:
+                    setattr(user, key, value)
         
         user.updated_at = datetime.utcnow()
         db.session.commit()

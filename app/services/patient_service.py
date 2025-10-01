@@ -8,10 +8,21 @@ class PatientService:
     
     def create_patient(self, patient_data, created_by):
         """Create a new patient"""
+        # Handle facility_id conversion
+        facility_id = patient_data.get('facility_id')
+        if facility_id and str(facility_id).strip():
+            try:
+                facility_id = int(facility_id)
+            except (ValueError, TypeError):
+                facility_id = None
+        else:
+            facility_id = None
+            
         patient = Patient(
             case_manager_name=patient_data['caseManagerName'],
             phone_number=patient_data['phoneNumber'],
             facility_name=patient_data['facilityName'],
+            facility_id=facility_id,
             patient_name=patient_data['patientName'],
             date=datetime.strptime(patient_data['date'], '%Y-%m-%d').date(),
             referral_received=patient_data.get('referralReceived', False),
@@ -38,6 +49,7 @@ class PatientService:
             'caseManagerName': 'case_manager_name',
             'phoneNumber': 'phone_number',
             'facilityName': 'facility_name',
+            'facility_id': 'facility_id',
             'patientName': 'patient_name',
             'referralReceived': 'referral_received',
             'insuranceVerification': 'insurance_verification',
@@ -55,6 +67,15 @@ class PatientService:
                 if hasattr(patient, db_field) and db_field not in ['id', 'created_at', 'created_by']:
                     if key == 'date' and value:
                         patient.date = datetime.strptime(value, '%Y-%m-%d').date()
+                    elif key == 'facility_id':
+                        # Handle facility_id conversion
+                        if value and str(value).strip():
+                            try:
+                                setattr(patient, db_field, int(value))
+                            except (ValueError, TypeError):
+                                setattr(patient, db_field, None)
+                        else:
+                            setattr(patient, db_field, None)
                     else:
                         setattr(patient, db_field, value)
         
