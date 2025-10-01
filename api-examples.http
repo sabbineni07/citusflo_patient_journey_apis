@@ -1,0 +1,152 @@
+### Patient API Examples
+### Use this file with REST Client extension in VS Code or similar tools
+
+@baseUrl = http://localhost:5000
+@token = your-jwt-token-here
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Register User
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "email": "test@example.com",
+  "password": "testpass123",
+  "first_name": "Test",
+  "last_name": "User",
+  "role": "user"
+}
+
+### Login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "testpass123"
+}
+
+### Get Profile
+GET {{baseUrl}}/api/auth/profile
+Authorization: Bearer {{token}}
+
+### Update Profile
+PUT {{baseUrl}}/api/auth/profile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "first_name": "Updated",
+  "last_name": "Name"
+}
+
+### Change Password
+POST {{baseUrl}}/api/auth/change-password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "current_password": "testpass123",
+  "new_password": "newpass123"
+}
+
+### Create Patient
+POST {{baseUrl}}/api/patients/
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "patient_id": "PAT-2024-001",
+  "first_name": "John",
+  "last_name": "Doe",
+  "date_of_birth": "1990-01-15",
+  "gender": "Male",
+  "phone": "+1234567890",
+  "email": "john.doe@example.com",
+  "address": "123 Main St, City, State 12345",
+  "emergency_contact_name": "Jane Doe",
+  "emergency_contact_phone": "+1234567891",
+  "medical_history": "No significant medical history",
+  "allergies": "None known",
+  "current_medications": "None",
+  "insurance_provider": "Health Insurance Co",
+  "insurance_number": "INS123456789",
+  "status": "active"
+}
+
+### Get All Patients
+GET {{baseUrl}}/api/patients/
+Authorization: Bearer {{token}}
+
+### Get All Patients with Pagination
+GET {{baseUrl}}/api/patients/?page=1&per_page=5
+Authorization: Bearer {{token}}
+
+### Search Patients
+GET {{baseUrl}}/api/patients/?search=John
+Authorization: Bearer {{token}}
+
+### Filter Patients by Status
+GET {{baseUrl}}/api/patients/?status=active
+Authorization: Bearer {{token}}
+
+### Get Patient by ID
+GET {{baseUrl}}/api/patients/1
+Authorization: Bearer {{token}}
+
+### Update Patient
+PUT {{baseUrl}}/api/patients/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "first_name": "Johnny",
+  "phone": "+1987654321",
+  "email": "johnny.doe@example.com"
+}
+
+### Delete Patient (Soft Delete)
+DELETE {{baseUrl}}/api/patients/1
+Authorization: Bearer {{token}}
+
+### Restore Patient
+POST {{baseUrl}}/api/patients/1/restore
+Authorization: Bearer {{token}}
+
+### Error Examples
+
+### Invalid Registration Data
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "ab",
+  "email": "invalid-email",
+  "password": "123"
+}
+
+### Invalid Login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "nonexistent",
+  "password": "wrongpassword"
+}
+
+### Unauthorized Access
+GET {{baseUrl}}/api/patients/
+
+### Invalid Patient Data
+POST {{baseUrl}}/api/patients/
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "first_name": "J",
+  "date_of_birth": "invalid-date",
+  "gender": "Invalid"
+}

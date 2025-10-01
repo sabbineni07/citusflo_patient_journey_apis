@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: citusflo_patient_journey_db
+    environment:
+      POSTGRES_DB: patient_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: citusflo_patient_journey_api
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - SECRET_KEY=your-secret-key-change-in-production
+      - DATABASE_URL=postgresql://postgres:password@db:5432/patient_db
+      - JWT_SECRET_KEY=your-jwt-secret-key-change-in-production
+      - JWT_ACCESS_TOKEN_EXPIRES=3600
+      - CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: >
+      sh -c "flask db upgrade &&
+             python -c 'from app import create_app, db; app = create_app(); app.app_context().push(); db.create_all()' &&
+             gunicorn --bind 0.0.0.0:5000 --workers 4 --timeout 120 app:app"
+
+  nginx:
+    image: nginx:alpine
+    container_name: citusflo_patient_journey_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - web
+
+volumes:
+  postgres_data:
