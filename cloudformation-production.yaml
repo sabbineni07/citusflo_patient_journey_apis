@@ -1,0 +1,416 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CitusFlo Patient Journey APIs - Production Infrastructure with HTTPS and Custom Domain Support'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Environment name
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where resources will be created
+  
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of all subnet IDs for RDS Database Subnet Group
+  
+  AlbSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of 2 public subnet IDs for the Application Load Balancer (must be in different AZs)
+  
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    Description: Database password
+    MinLength: 8
+    MaxLength: 128
+  
+  SecretKey:
+    Type: String
+    NoEcho: true
+    Description: Flask secret key
+    MinLength: 32
+  
+  JWTSecretKey:
+    Type: String
+    NoEcho: true
+    Description: JWT secret key
+    MinLength: 32
+
+  # Optional Custom Domain Configuration
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Custom domain name for HTTPS (optional - leave empty for AWS-managed certificate)
+  
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: ARN of existing SSL certificate (optional - leave empty for auto-created certificate)
+
+Conditions:
+  UseCustomDomain: !Not [!Equals [!Ref DomainName, '']]
+  UseExistingCertificate: !Not [!Equals [!Ref CertificateArn, '']]
+
+Resources:
+  # SSL Certificate (if custom domain provided)
+  SSLCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub '*.${DomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref 'AWS::HostedZoneId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-api-ssl-cert'
+    Condition: UseCustomDomain
+
+  # RDS Database
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for citusflo patient journey database
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-db-subnet-group'
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for patient database
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !GetAtt ApplicationSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-db-sg'
+
+  PatientDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${Environment}-patient-db'
+      DBName: patient_journey
+      Engine: postgres
+      EngineVersion: '15.7'
+      MasterUsername: postgres
+      MasterUserPassword: !Ref DatabasePassword
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      MultiAZ: 'true'
+      PubliclyAccessible: 'false'
+      StorageEncrypted: 'true'
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: 03:00-05:00
+      PreferredMaintenanceWindow: Mon:06:00-Mon:07:00
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-db'
+
+  # ECR Repository
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${Environment}-citusflo-patient-journey-api'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-citusflo-patient-journey-api'
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${Environment}-citusflo-patient-cluster'
+      CapacityProviders:
+        - FARGATE
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-cluster'
+
+  # IAM Role for ECS Tasks
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-ecs-task-role'
+
+  # Log Group for ECS Tasks
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${Environment}-citusflo-patient-api'
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-api-log-group'
+
+  # ECS Task Definition
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${Environment}-citusflo-patient-api-task'
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: patient-api
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest'
+          PortMappings:
+            - ContainerPort: 5000
+              Protocol: tcp
+          Environment:
+            - Name: FLASK_ENV
+              Value: !Ref Environment
+            - Name: DATABASE_URL
+              Value: !Sub 'postgresql://postgres:${DatabasePassword}@${PatientDatabase.Endpoint.Address}:${PatientDatabase.Endpoint.Port}/patient_journey'
+            - Name: SECRET_KEY
+              Value: !Ref SecretKey
+            - Name: JWT_SECRET_KEY
+              Value: !Ref JWTSecretKey
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogGroup
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: ecs
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-api-task-definition'
+
+  # Application Security Group
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for patient API
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !GetAtt LoadBalancerSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-api-sg'
+
+  # Load Balancer Security Group
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for load balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-lb-sg'
+
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${Environment}-patient-lb'
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Ref AlbSubnetIds
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-lb'
+
+  # Target Group
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${Environment}-patient-tg'
+      Port: 5000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetType: ip
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-patient-tg'
+
+  # Load Balancer Listener (HTTP to HTTPS redirect)
+  LoadBalancerListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: '443'
+            StatusCode: HTTP_301
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Load Balancer Listener (HTTPS)
+  LoadBalancerListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !If
+          - UseCustomDomain
+          - !If
+            - UseExistingCertificate
+            - !Ref CertificateArn
+            - !Ref SSLCertificate
+          - !Ref 'AWS::NoValue'
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub '${Environment}-citusflo-patient-service'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref ApplicationSecurityGroup
+      LoadBalancers:
+        - ContainerName: patient-api
+          ContainerPort: 5000
+          TargetGroupArn: !Ref TargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-api-service'
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub '${Environment}-patient-lb-dns'
+
+  ApplicationURL:
+    Description: Application HTTPS URL
+    Value: !If
+      - UseCustomDomain
+      - !Sub 'https://${DomainName}'
+      - !Sub 'https://${ApplicationLoadBalancer.DNSName}'
+    Export:
+      Name: !Sub '${Environment}-patient-app-url'
+
+  ApplicationHTTPURL:
+    Description: Application HTTP URL (redirects to HTTPS)
+    Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}'
+    Export:
+      Name: !Sub '${Environment}-patient-app-http-url'
+
+  HealthCheckURL:
+    Description: Health check HTTPS URL
+    Value: !If
+      - UseCustomDomain
+      - !Sub 'https://${DomainName}/health'
+      - !Sub 'https://${ApplicationLoadBalancer.DNSName}/health'
+    Export:
+      Name: !Sub '${Environment}-patient-health-url'
+
+  DatabaseEndpoint:
+    Description: Database endpoint
+    Value: !GetAtt PatientDatabase.Endpoint.Address
+    Export:
+      Name: !Sub '${Environment}-patient-db-endpoint'
+
+  ECSClusterName:
+    Description: Name of the ECS cluster
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${Environment}-ecs-cluster-name'
+
+  ECSServiceName:
+    Description: Name of the ECS service
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub '${Environment}-ecs-service-name'
+
+  SSLCertificateArn:
+    Description: SSL Certificate ARN (if created)
+    Value: !If
+      - UseCustomDomain
+      - !If
+        - UseExistingCertificate
+        - !Ref CertificateArn
+        - !Ref SSLCertificate
+      - !Ref 'AWS::NoValue'
+    Export:
+      Name: !Sub '${Environment}-patient-ssl-cert-arn'

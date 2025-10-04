@@ -7,14 +7,16 @@ A comprehensive Flask-based REST API for managing patient journey records with J
 - **🔐 JWT Authentication**: Complete authentication system with login, registration, profile management, and token refresh
 - **👥 User Management**: User registration, profile updates, password changes, and role-based access
 - **🏥 Patient Management**: Complete CRUD operations for patient records with case management focus
+- **🏢 Dynamic Facilities**: Automatic facility creation and management with user-facility relationships
 - **📊 Case Manager Records**: Specialized endpoints for case manager dashboard and reporting
 - **🗄️ PostgreSQL Database**: Robust data storage with proper relationships and migrations
 - **🐳 Docker Support**: Full containerization with development and production environments
 - **🌐 CORS Configuration**: Properly configured for Angular frontend integration
 - **🧪 Comprehensive Testing**: Unit tests, integration tests, and end-to-end tests
-- **☁️ AWS Deployment**: Ready-to-deploy infrastructure with ECS Fargate
+- **☁️ AWS Production Deployment**: Complete HTTPS setup with custom domain and monitoring
 - **🔒 Security**: Password hashing, input validation, and secure authentication
 - **📈 Database Migrations**: Flask-Migrate integration for schema management
+- **💰 Cost Optimization**: Detailed AWS cost analysis with optimization strategies
 
 ## 📋 Table of Contents
 
@@ -77,7 +79,9 @@ A comprehensive Flask-based REST API for managing patient journey records with J
 6. **Access the application**
    - **Development API**: http://localhost:5001
    - **Production API**: http://localhost:5000
+   - **Production API (AWS)**: https://api.citusflo.com
    - **Health Check**: http://localhost:5001/health
+   - **Production Health Check**: https://api.citusflo.com/health
 
 ## 🔌 API Endpoints
 
@@ -331,6 +335,52 @@ Authorization: Bearer <access_token>
 }
 ```
 
+### Facilities Endpoints
+
+#### Get All Facilities
+```http
+GET /api/facilities/
+Authorization: Bearer <access_token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "1",
+      "name": "General Hospital",
+      "address": "123 Main St, City, State",
+      "phone": "+1234567890",
+      "created_at": "2024-01-15T10:30:00.000Z",
+      "updated_at": "2024-01-15T10:30:00.000Z"
+    }
+  ]
+}
+```
+
+#### Get Facility by ID
+```http
+GET /api/facilities/{id}
+Authorization: Bearer <access_token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "1",
+    "name": "General Hospital",
+    "address": "123 Main St, City, State",
+    "phone": "+1234567890",
+    "created_at": "2024-01-15T10:30:00.000Z",
+    "updated_at": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
 ### Health Check
 ```http
 GET /health
@@ -356,19 +406,33 @@ CREATE TABLE users (
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
     role VARCHAR(20) DEFAULT 'user',
+    facility_id INTEGER REFERENCES facilities(id),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### Patients Table (Updated Schema)
+### Facilities Table (Dynamic Creation)
+```sql
+CREATE TABLE facilities (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    address VARCHAR(255),
+    phone VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Patients Table (Updated Schema with Facility Relationship)
 ```sql
 CREATE TABLE patients (
     id SERIAL PRIMARY KEY,
     case_manager_name VARCHAR(100) NOT NULL,
     phone_number VARCHAR(20) NOT NULL,
     facility_name VARCHAR(100) NOT NULL,
+    facility_id INTEGER REFERENCES facilities(id),
     patient_name VARCHAR(100) NOT NULL,
     date DATE NOT NULL,
     referral_received BOOLEAN DEFAULT FALSE,
@@ -379,11 +443,18 @@ CREATE TABLE patients (
     admitted BOOLEAN DEFAULT FALSE,
     care_follow_up BOOLEAN DEFAULT FALSE,
     form_content TEXT,
-    created_by INTEGER REFERENCES users(id),
+    created_by INTEGER REFERENCES users(id) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
+
+### Database Relationships
+
+- **Users ↔ Facilities**: Many-to-One relationship (users can belong to one facility)
+- **Patients ↔ Facilities**: Many-to-One relationship (patients can belong to one facility)
+- **Patients ↔ Users**: Many-to-One relationship (patients created by users)
+- **Facilities**: Dynamically created based on user input (no predefined list)
 
 ## 🐳 Docker Setup
 
@@ -549,57 +620,42 @@ The test suite includes:
 - AWS CLI configured
 - Docker installed
 - Appropriate AWS permissions
+- Domain registered (for HTTPS deployment)
 
 ### Quick Deployment
 
 ```bash
 # Make deployment script executable
-chmod +x aws/deploy.sh
+chmod +x deploy-production.sh
 
-# Deploy to AWS
-./aws/deploy.sh
+# Deploy with custom domain
+./deploy-production.sh --domain citusflo.com --subdomain api
+
+# Deploy without custom domain (HTTP only)
+./deploy-production.sh
 ```
 
-### Manual Deployment Steps
+### Production Deployment Features
 
-1. **Create ECR Repository**
-   ```bash
-   aws ecr create-repository --repository-name citusflo-patient-journey-api --region us-east-1
-   ```
-
-2. **Build and Push Docker Image**
-   ```bash
-   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
-   docker build -t citusflo-patient-journey-api .
-   docker tag citusflo-patient-journey-api:latest <account-id>.dkr.ecr.us-east-1.amazonaws.com/citusflo-patient-journey-api:latest
-   docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/citusflo-patient-journey-api:latest
-   ```
-
-3. **Deploy Infrastructure**
-   ```bash
-   aws cloudformation deploy \
-     --template-file aws/cloudformation-template.yaml \
-     --stack-name citusflo-patient-journey-api-infrastructure \
-     --capabilities CAPABILITY_IAM
-   ```
-
-4. **Update ECS Service**
-   ```bash
-   aws ecs update-service \
-     --cluster production-citusflo-patient-cluster \
-     --service production-citusflo-patient-service \
-     --force-new-deployment
-   ```
+- **✅ HTTPS Support**: SSL/TLS certificates via AWS Certificate Manager
+- **✅ Custom Domain**: Route53 integration with custom domain support
+- **✅ Auto-Scaling**: ECS Fargate with automatic scaling
+- **✅ Load Balancing**: Application Load Balancer with health checks
+- **✅ Database**: RDS PostgreSQL with automated backups
+- **✅ Monitoring**: CloudWatch logs and metrics
+- **✅ Security**: VPC isolation and security groups
 
 ### AWS Architecture
 
 The deployment includes:
-- **ECS Fargate**: Container orchestration
-- **Application Load Balancer**: Traffic distribution
-- **RDS PostgreSQL**: Managed database
-- **CloudWatch**: Logging and monitoring
-- **Secrets Manager**: Secure configuration
-- **VPC**: Network isolation
+- **ECS Fargate**: Container orchestration (0.5 vCPU, 1GB RAM)
+- **Application Load Balancer**: Traffic distribution with HTTPS
+- **RDS PostgreSQL**: Managed database (db.t3.micro, 20GB)
+- **CloudWatch**: Logging and monitoring (30-day retention)
+- **ECR**: Container registry for Docker images
+- **Route53**: DNS management with custom domain
+- **ACM**: SSL certificate management (FREE)
+- **VPC**: Network isolation with public/private subnets
 
 ### Environment Variables
 
@@ -609,6 +665,75 @@ Set these in AWS Secrets Manager or ECS task definition:
 - `JWT_SECRET_KEY`: JWT signing key
 - `FLASK_ENV`: Environment (production)
 - `CORS_ORIGINS`: Allowed CORS origins
+
+### Deployment Files
+
+- `deploy-production.sh`: Main deployment script
+- `cloudformation-production.yaml`: Infrastructure template
+- `DEPLOYMENT.md`: Comprehensive deployment guide
+
+## 💰 AWS Cost Analysis
+
+### Current Resource Costs (US-East-1)
+
+**🔴 Service Stopped (Current Status):**
+- **RDS PostgreSQL**: $15-20/month (db.t3.micro, 20GB storage)
+- **Application Load Balancer**: $22.50/month (fixed cost)
+- **ECR Repository**: $1-2/month (Docker image storage)
+- **CloudWatch Logs**: $1-3/month (30-day retention)
+- **Route53 Hosted Zone**: $0.50-1/month (DNS queries)
+- **SSL Certificates**: $0/month (FREE with ACM)
+- **ECS Fargate**: $0/month (stopped)
+
+**📊 Current Monthly Total: $40-48/month**
+
+**🟢 Production Running:**
+- **RDS PostgreSQL**: $15-20/month
+- **Application Load Balancer**: $22.50/month
+- **ECS Fargate**: $15-25/month (0.5 vCPU, 1GB RAM)
+- **ECR Repository**: $1-2/month
+- **CloudWatch Logs**: $1-3/month
+- **Route53 Hosted Zone**: $0.50-1/month
+- **SSL Certificates**: $0/month
+
+**📊 Production Monthly Total: $55-73/month**
+
+### Cost Optimization Opportunities
+
+**1. Auto-Scaling ECS Service:**
+- Scale to 0 tasks during low usage
+- **Savings**: $15-25/month during off-hours
+
+**2. RDS Optimization:**
+- Consider `db.t3.nano` for development ($4-8/month)
+- **Savings**: $10-15/month
+
+**3. Load Balancer Optimization:**
+- Use Network Load Balancer for API-only ($16/month)
+- **Savings**: $6.50/month
+
+**4. CloudWatch Logs:**
+- Reduce retention to 14 days for development
+- **Savings**: $1-2/month
+
+### Optimized Cost Projections
+
+- **Development Environment**: $25-35/month
+- **Production Environment**: $40-55/month
+- **Auto-scaled Production**: $25-45/month
+
+### Annual Cost Projections
+
+- **Current Setup**: $660-876/year
+- **Optimized Setup**: $480-660/year
+- **Potential Annual Savings**: $180-216/year
+
+### Cost Breakdown by Service
+
+- **Load Balancer**: 41% of total cost
+- **RDS Database**: 27% of total cost
+- **ECS Fargate**: 21% of total cost (when running)
+- **Other services**: 11% of total cost
 
 ## 🛠️ Development
 
@@ -620,11 +745,13 @@ citusflo_patient_journey_apis/
 │   ├── __init__.py              # Flask app factory with CORS config
 │   ├── models/                  # Database models
 │   │   ├── user.py             # User model with authentication
-│   │   └── patient.py          # Patient model (updated schema)
+│   │   ├── patient.py          # Patient model (updated schema)
+│   │   └── facility.py         # Facility model (dynamic creation)
 │   ├── routes/                 # API routes
 │   │   ├── auth.py            # Authentication endpoints
 │   │   ├── patients.py        # Patient CRUD endpoints
-│   │   └── case_manager_records.py  # Case manager dashboard endpoints
+│   │   ├── case_manager_records.py  # Case manager dashboard endpoints
+│   │   └── facilities.py      # Facility management endpoints
 │   ├── services/              # Business logic
 │   │   ├── auth_service.py    # Authentication service
 │   │   └── patient_service.py # Patient management service
@@ -635,11 +762,13 @@ citusflo_patient_journey_apis/
 │       ├── integration/
 │       └── e2e/
 ├── migrations/                # Database migrations
-├── aws/                      # AWS deployment files
 ├── docker-compose.yml        # Production Docker setup
 ├── docker-compose.dev.yml    # Development Docker setup
 ├── Dockerfile               # Docker image definition
 ├── requirements.txt         # Python dependencies
+├── deploy-production.sh     # AWS deployment script
+├── cloudformation-production.yaml  # Infrastructure template
+├── DEPLOYMENT.md           # Deployment guide
 ├── CORS-CONFIGURATION.md    # CORS setup guide
 └── README.md               # This file
 ```
@@ -748,7 +877,17 @@ For support and questions:
 
 ## 📝 Changelog
 
-### Version 2.0.0 (Current)
+### Version 3.0.0 (Current)
+- ✅ **Dynamic Facilities System**: Automatic facility creation based on user input
+- ✅ **Enhanced Database Schema**: Facilities table with proper relationships
+- ✅ **AWS Production Deployment**: Complete HTTPS setup with custom domain
+- ✅ **Cost Optimization**: Detailed AWS cost analysis and optimization strategies
+- ✅ **Facility Management**: New endpoints for facility CRUD operations
+- ✅ **User-Facility Relationships**: Users can be assigned to facilities
+- ✅ **Patient-Facility Relationships**: Patients linked to facilities via foreign keys
+- ✅ **Production-Ready**: SSL certificates, custom domain, and monitoring
+
+### Version 2.0.0
 - ✅ **Updated Patient Model**: New schema focused on case management
 - ✅ **Enhanced Authentication**: Complete JWT system with refresh tokens
 - ✅ **Case Manager Records**: Specialized endpoints for dashboard functionality
