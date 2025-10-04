@@ -82,3 +82,6 @@ def create_app():
         print("Database initialized successfully!")
     
     return app
+
+# Create the app instance for Gunicorn
+app = create_app()

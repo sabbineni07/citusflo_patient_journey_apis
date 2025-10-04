@@ -1,5 +1,6 @@
 from app import db
 from app.models.patient import Patient
+from app.models.facility import Facility
 from datetime import datetime
 import uuid
 
@@ -8,20 +9,31 @@ class PatientService:
     
     def create_patient(self, patient_data, created_by):
         """Create a new patient"""
-        # Handle facility_id conversion
-        facility_id = patient_data.get('facility_id')
-        if facility_id and str(facility_id).strip():
-            try:
-                facility_id = int(facility_id)
-            except (ValueError, TypeError):
-                facility_id = None
+        # Handle facility creation/assignment using facility_name
+        facility_name = patient_data.get('facilityName')
+        facility_id = None
+        
+        if facility_name:
+            # Get or create facility using facility_name
+            facility = Facility.get_or_create(
+                name=facility_name,
+                address=patient_data.get('facilityAddress'),
+                phone=patient_data.get('facilityPhone')
+            )
+            facility_id = facility.id
         else:
-            facility_id = None
+            # Fallback: handle direct facility_id if provided
+            facility_id = patient_data.get('facility_id')
+            if facility_id and str(facility_id).strip():
+                try:
+                    facility_id = int(facility_id)
+                except (ValueError, TypeError):
+                    facility_id = None
             
         patient = Patient(
             case_manager_name=patient_data['caseManagerName'],
             phone_number=patient_data['phoneNumber'],
-            facility_name=patient_data['facilityName'],
+            facility_name=facility_name,
             facility_id=facility_id,
             patient_name=patient_data['patientName'],
             date=datetime.strptime(patient_data['date'], '%Y-%m-%d').date(),
@@ -44,12 +56,26 @@ class PatientService:
     
     def update_patient(self, patient, patient_data):
         """Update an existing patient"""
+        # Handle facility update using facility_name
+        if 'facilityName' in patient_data:
+            facility_name = patient_data['facilityName']
+            if facility_name:
+                # Get or create facility using facility_name
+                facility = Facility.get_or_create(
+                    name=facility_name,
+                    address=patient_data.get('facilityAddress'),
+                    phone=patient_data.get('facilityPhone')
+                )
+                patient.facility_id = facility.id
+                patient.facility_name = facility_name
+            else:
+                patient.facility_id = None
+                patient.facility_name = None
+        
         # Map camelCase to snake_case for database fields
         field_mapping = {
             'caseManagerName': 'case_manager_name',
             'phoneNumber': 'phone_number',
-            'facilityName': 'facility_name',
-            'facility_id': 'facility_id',
             'patientName': 'patient_name',
             'referralReceived': 'referral_received',
             'insuranceVerification': 'insurance_verification',
@@ -60,24 +86,24 @@ class PatientService:
             'formContent': 'form_content'
         }
         
-        # Update fields
+        # Update other fields
         for key, value in patient_data.items():
             if key in field_mapping:
                 db_field = field_mapping[key]
-                if hasattr(patient, db_field) and db_field not in ['id', 'created_at', 'created_by']:
+                if hasattr(patient, db_field) and db_field not in ['id', 'created_at', 'created_by', 'facility_name', 'facility_id']:
                     if key == 'date' and value:
                         patient.date = datetime.strptime(value, '%Y-%m-%d').date()
-                    elif key == 'facility_id':
-                        # Handle facility_id conversion
-                        if value and str(value).strip():
-                            try:
-                                setattr(patient, db_field, int(value))
-                            except (ValueError, TypeError):
-                                setattr(patient, db_field, None)
-                        else:
-                            setattr(patient, db_field, None)
                     else:
                         setattr(patient, db_field, value)
+            elif key == 'facility_id' and 'facilityName' not in patient_data:
+                # Handle direct facility_id update only if facilityName is not provided
+                if value and str(value).strip():
+                    try:
+                        patient.facility_id = int(value)
+                    except (ValueError, TypeError):
+                        patient.facility_id = None
+                else:
+                    patient.facility_id = None
         
         patient.updated_at = datetime.utcnow()
         db.session.commit()
