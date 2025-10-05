@@ -626,13 +626,13 @@ The test suite includes:
 
 ```bash
 # Make deployment script executable
-chmod +x deploy-production.sh
+chmod +x aws/deploy/deploy-production.sh
 
 # Deploy with custom domain
-./deploy-production.sh --domain citusflo.com --subdomain api
+./aws/deploy/deploy-production.sh --domain citusflo.com --subdomain api
 
 # Deploy without custom domain (HTTP only)
-./deploy-production.sh
+./aws/deploy/deploy-production.sh
 ```
 
 ### Production Deployment Features
@@ -668,9 +668,10 @@ Set these in AWS Secrets Manager or ECS task definition:
 
 ### Deployment Files
 
-- `deploy-production.sh`: Main deployment script
-- `cloudformation-production.yaml`: Infrastructure template
-- `DEPLOYMENT.md`: Comprehensive deployment guide
+- `aws/deploy/deploy-production.sh`: Main deployment script
+- `aws/deploy/cloudformation-production.yaml`: Infrastructure template
+- `aws/deploy/DEPLOYMENT.md`: Comprehensive deployment guide
+- `aws/deploy/troubleshoot-deployment.sh`: Troubleshooting tool
 
 ## 💰 AWS Cost Analysis
 
@@ -766,9 +767,11 @@ citusflo_patient_journey_apis/
 ├── docker-compose.dev.yml    # Development Docker setup
 ├── Dockerfile               # Docker image definition
 ├── requirements.txt         # Python dependencies
-├── deploy-production.sh     # AWS deployment script
-├── cloudformation-production.yaml  # Infrastructure template
-├── DEPLOYMENT.md           # Deployment guide
+├── aws/deploy/              # AWS deployment files
+│   ├── deploy-production.sh     # AWS deployment script
+│   ├── troubleshoot-deployment.sh # Troubleshooting tool
+│   ├── cloudformation-production.yaml  # Infrastructure template
+│   └── DEPLOYMENT.md           # Deployment guide
 ├── CORS-CONFIGURATION.md    # CORS setup guide
 └── README.md               # This file
 ```
@@ -875,9 +878,49 @@ For support and questions:
 - Review the test cases for usage examples
 - See CORS-CONFIGURATION.md for frontend integration help
 
+### 🚨 Troubleshooting
+
+For deployment issues, use the automated troubleshooting tool:
+
+```bash
+# Run comprehensive deployment check
+./aws/deploy/troubleshoot-deployment.sh
+```
+
+This script will:
+- ✅ Check CloudFormation stack status
+- ✅ Verify ECS service health
+- ✅ Test database connectivity
+- ✅ Validate security group configurations
+- ✅ Test API endpoints
+- ✅ Check database initialization
+- 🔧 Auto-fix common issues (with confirmation)
+
+### Common Issues
+
+**504 Gateway Timeout:**
+- Usually indicates database not initialized
+- Run `./aws/deploy/troubleshoot-deployment.sh` for automatic fix
+
+**Database Connection Issues:**
+- Check RDS security group allows ECS access on port 5432
+- Verify database initialization was completed
+
+**SSL Certificate Warnings:**
+- Ensure DNS records point to load balancer
+- Check ACM certificate status in AWS Console
+
 ## 📝 Changelog
 
-### Version 3.0.0 (Current)
+### Version 3.1.0 (Current)
+- ✅ **Automated Database Initialization**: Deployment scripts now include automatic database setup
+- ✅ **Comprehensive Troubleshooting**: New troubleshooting script for deployment issues
+- ✅ **Enhanced Documentation**: Updated deployment guides with missing steps
+- ✅ **Security Group Auto-Fix**: Automated RDS security group configuration
+- ✅ **504 Timeout Resolution**: Automatic detection and fixing of database connectivity issues
+- ✅ **Production Deployment Improvements**: More reliable and automated deployment process
+
+### Version 3.0.0
 - ✅ **Dynamic Facilities System**: Automatic facility creation based on user input
 - ✅ **Enhanced Database Schema**: Facilities table with proper relationships
 - ✅ **AWS Production Deployment**: Complete HTTPS setup with custom domain

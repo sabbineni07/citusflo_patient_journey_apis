@@ -154,10 +154,10 @@ print_status "☁️  Deploying CloudFormation stack..."
 
 # Choose template based on deployment type
 if [ "$DEPLOYMENT_TYPE" = "https-only" ]; then
-    TEMPLATE_FILE="cloudformation-https.yaml"
+    TEMPLATE_FILE="aws/deploy/cloudformation-https.yaml"
     STACK_NAME="$STACK_NAME-https"
 else
-    TEMPLATE_FILE="cloudformation.yaml"
+    TEMPLATE_FILE="aws/deploy/cloudformation-production.yaml"
 fi
 
 # Check if stack exists
@@ -224,6 +224,42 @@ ECS_SERVICE=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-na
 
 aws ecs wait services-stable --region $AWS_REGION --cluster $ECS_CLUSTER --services $ECS_SERVICE
 
+# Initialize database after ECS service is stable
+print_status "🗄️  Initializing database..."
+print_status "Running database initialization (flask init-db)..."
+
+# Get the current task definition
+TASK_DEFINITION=$(aws ecs describe-services --region $AWS_REGION --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].taskDefinition' --output text)
+
+# Run database initialization task
+INIT_TASK_ARN=$(aws ecs run-task \
+    --cluster $ECS_CLUSTER \
+    --task-definition $TASK_DEFINITION \
+    --launch-type FARGATE \
+    --network-configuration "awsvpcConfiguration={subnets=[$ALB_SUBNETS],securityGroups=[$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ECSSecurityGroupId`].OutputValue' --output text)],assignPublicIp=ENABLED}" \
+    --overrides '{"containerOverrides":[{"name":"patient-api","command":["flask","init-db"]}]}' \
+    --region $AWS_REGION \
+    --query 'tasks[0].taskArn' --output text)
+
+print_status "Database initialization task started: $INIT_TASK_ARN"
+
+# Wait for database initialization to complete
+print_status "Waiting for database initialization to complete..."
+aws ecs wait tasks-stopped --region $AWS_REGION --cluster $ECS_CLUSTER --tasks $INIT_TASK_ARN
+
+# Check if database initialization was successful
+INIT_EXIT_CODE=$(aws ecs describe-tasks --region $AWS_REGION --cluster $ECS_CLUSTER --tasks $INIT_TASK_ARN --query 'tasks[0].containers[0].exitCode' --output text)
+
+if [ "$INIT_EXIT_CODE" = "0" ]; then
+    print_success "✅ Database initialized successfully!"
+    print_success "Admin user created: username=admin, password=admin123"
+else
+    print_error "❌ Database initialization failed with exit code: $INIT_EXIT_CODE"
+    print_error "Check the logs for details:"
+    print_error "aws logs get-log-events --log-group-name /ecs/$STACK_NAME --log-stream-name ecs/patient-api/$INIT_TASK_ARN --region $AWS_REGION"
+    exit 1
+fi
+
 # Test the deployment
 print_status "🧪 Testing deployment..."
 
@@ -275,15 +311,32 @@ echo "Database: Encrypted at rest"
 echo ""
 echo "📝 NEXT STEPS:"
 echo "=============="
-echo "1. Test your application"
-echo "2. Update your frontend to use HTTPS URLs"
-echo "3. Monitor the deployment"
+echo "1. Test your application endpoints"
+echo "2. Login with admin credentials: admin / admin123"
+echo "3. Update your frontend to use HTTPS URLs"
+echo "4. Monitor the deployment"
+echo ""
+echo "🔐 ADMIN CREDENTIALS:"
+echo "===================="
+echo "Username: admin"
+echo "Password: admin123"
+echo "Email: admin@hospital.com"
 echo ""
 echo "💡 TROUBLESHOOTING:"
 echo "==================="
 echo "To check deployment status:"
 echo "aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME"
 echo ""
-echo "To view logs:"
+echo "To view application logs:"
 echo "aws logs describe-log-groups --region $AWS_REGION --log-group-name-prefix /ecs/$STACK_NAME"
+echo ""
+echo "To check ECS service status:"
+echo "aws ecs describe-services --region $AWS_REGION --cluster $ECS_CLUSTER --services $ECS_SERVICE"
+echo ""
+echo "If API endpoints return 504 timeout, check database connectivity:"
+echo "1. Verify RDS security group allows ECS access on port 5432"
+echo "2. Run database initialization manually if needed:"
+echo "   aws ecs run-task --cluster $ECS_CLUSTER --task-definition $TASK_DEFINITION \\"
+echo "     --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[$ALB_SUBNETS],securityGroups=[...],assignPublicIp=ENABLED}' \\"
+echo "     --overrides '{\"containerOverrides\":[{\"name\":\"patient-api\",\"command\":[\"flask\",\"init-db\"]}]}'"
 echo ""
