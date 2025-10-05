@@ -39,36 +39,37 @@ Parameters:
     Description: JWT secret key
     MinLength: 32
 
-  # Optional Custom Domain Configuration
+  # Custom Domain Configuration
   DomainName:
     Type: String
-    Default: ""
-    Description: Custom domain name for HTTPS (optional - leave empty for AWS-managed certificate)
+    Default: "api.citusflo.com"
+    Description: Custom domain name for HTTPS
   
   CertificateArn:
     Type: String
-    Default: ""
-    Description: ARN of existing SSL certificate (optional - leave empty for auto-created certificate)
+    Default: "arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37"
+    Description: ARN of existing SSL certificate for api.citusflo.com
+  
+  HostedZoneId:
+    Type: String
+    Default: "Z074839530U7S7LIQMR0M"
+    Description: Route53 Hosted Zone ID for citusflo.com
 
 Conditions:
   UseCustomDomain: !Not [!Equals [!Ref DomainName, '']]
   UseExistingCertificate: !Not [!Equals [!Ref CertificateArn, '']]
 
 Resources:
-  # SSL Certificate (if custom domain provided)
-  SSLCertificate:
-    Type: AWS::CertificateManager::Certificate
+  # Route53 DNS Record for API subdomain
+  ApiDNSRecord:
+    Type: AWS::Route53::RecordSet
     Properties:
-      DomainName: !Ref DomainName
-      SubjectAlternativeNames:
-        - !Sub '*.${DomainName}'
-      ValidationMethod: DNS
-      DomainValidationOptions:
-        - DomainName: !Ref DomainName
-          HostedZoneId: !Ref 'AWS::HostedZoneId'
-      Tags:
-        - Key: Name
-          Value: !Sub '${Environment}-patient-api-ssl-cert'
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt ApplicationLoadBalancer.DNSName
     Condition: UseCustomDomain
 
   # RDS Database
@@ -91,6 +92,11 @@ Resources:
           FromPort: 5432
           ToPort: 5432
           SourceSecurityGroupId: !GetAtt ApplicationSecurityGroup.GroupId
+        # Allow access from the same security group (self-reference)
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          SourceSecurityGroupId: !Ref DatabaseSecurityGroup
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-patient-db-sg'
@@ -110,7 +116,7 @@ Resources:
         - !Ref DatabaseSecurityGroup
       DBSubnetGroupName: !Ref DatabaseSubnetGroup
       MultiAZ: 'true'
-      PubliclyAccessible: 'false'
+      PubliclyAccessible: 'true'
       StorageEncrypted: 'true'
       BackupRetentionPeriod: 7
       PreferredBackupWindow: 03:00-05:00
@@ -323,13 +329,7 @@ Resources:
       Port: 443
       Protocol: HTTPS
       Certificates:
-        - CertificateArn: !If
-          - UseCustomDomain
-          - !If
-            - UseExistingCertificate
-            - !Ref CertificateArn
-            - !Ref SSLCertificate
-          - !Ref 'AWS::NoValue'
+        - CertificateArn: !Ref CertificateArn
 
   # ECS Service
   ECSService:
@@ -404,13 +404,19 @@ Outputs:
       Name: !Sub '${Environment}-ecs-service-name'
 
   SSLCertificateArn:
-    Description: SSL Certificate ARN (if created)
-    Value: !If
-      - UseCustomDomain
-      - !If
-        - UseExistingCertificate
-        - !Ref CertificateArn
-        - !Ref SSLCertificate
-      - !Ref 'AWS::NoValue'
+    Description: SSL Certificate ARN being used
+    Value: !Ref CertificateArn
     Export:
       Name: !Sub '${Environment}-patient-ssl-cert-arn'
+
+  DomainName:
+    Description: Custom domain name
+    Value: !Ref DomainName
+    Export:
+      Name: !Sub '${Environment}-patient-domain-name'
+
+  HostedZoneId:
+    Description: Route53 Hosted Zone ID
+    Value: !Ref HostedZoneId
+    Export:
+      Name: !Sub '${Environment}-patient-hosted-zone-id'

@@ -195,6 +195,16 @@ fix_database_init() {
         ALB_SUBNETS=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`AlbSubnetIds`].OutputValue' --output text 2>/dev/null || echo "")
         ECS_SG=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ECSSecurityGroupId`].OutputValue' --output text 2>/dev/null || echo "")
         
+        # If CloudFormation outputs not available, use known values from actual infrastructure
+        if [ -z "$ALB_SUBNETS" ]; then
+            ALB_SUBNETS="subnet-0bdb6dd4f4f780305,subnet-035661356dc83d054"
+            print_warning "Using known public subnets: $ALB_SUBNETS"
+        fi
+        if [ -z "$ECS_SG" ]; then
+            ECS_SG="sg-0837e683efb9d04b0"
+            print_warning "Using known ECS security group: $ECS_SG"
+        fi
+        
         if [ -n "$ALB_SUBNETS" ] && [ -n "$ECS_SG" ]; then
             INIT_TASK_ARN=$(aws ecs run-task \
                 --cluster $ECS_CLUSTER \
@@ -237,9 +247,21 @@ check_rds_security() {
     # Get database security group
     DB_SG=$(aws rds describe-db-instances --region $AWS_REGION --db-instance-identifier production-citusflo-patient-db --query 'DBInstances[0].VpcSecurityGroups[0].VpcSecurityGroupId' --output text 2>/dev/null || echo "")
     
+    # If not found, use known default security group
+    if [ -z "$DB_SG" ] || [ "$DB_SG" = "None" ]; then
+        DB_SG="sg-0ea7f4ff19f0587c3"
+        print_warning "Using known database security group: $DB_SG"
+    fi
+    
     if [ -n "$DB_SG" ]; then
         # Check if ECS security group has access
         ECS_SG=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ECSSecurityGroupId`].OutputValue' --output text 2>/dev/null || echo "")
+        
+        # If not found, use known ECS security group
+        if [ -z "$ECS_SG" ] || [ "$ECS_SG" = "None" ]; then
+            ECS_SG="sg-0837e683efb9d04b0"
+            print_warning "Using known ECS security group: $ECS_SG"
+        fi
         
         if [ -n "$ECS_SG" ]; then
             # Check ingress rules
@@ -269,6 +291,16 @@ fix_rds_security() {
     # Get database security group
     DB_SG=$(aws rds describe-db-instances --region $AWS_REGION --db-instance-identifier production-citusflo-patient-db --query 'DBInstances[0].VpcSecurityGroups[0].VpcSecurityGroupId' --output text 2>/dev/null || echo "")
     ECS_SG=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ECSSecurityGroupId`].OutputValue' --output text 2>/dev/null || echo "")
+    
+    # Use known values if CloudFormation outputs not available
+    if [ -z "$DB_SG" ] || [ "$DB_SG" = "None" ]; then
+        DB_SG="sg-0ea7f4ff19f0587c3"
+        print_warning "Using known database security group: $DB_SG"
+    fi
+    if [ -z "$ECS_SG" ] || [ "$ECS_SG" = "None" ]; then
+        ECS_SG="sg-0837e683efb9d04b0"
+        print_warning "Using known ECS security group: $ECS_SG"
+    fi
     
     if [ -n "$DB_SG" ] && [ -n "$ECS_SG" ]; then
         print_status "Adding ingress rule for ECS security group..."

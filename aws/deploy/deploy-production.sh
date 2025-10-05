@@ -91,8 +91,13 @@ command -v aws >/dev/null 2>&1 || { print_error "AWS CLI is required but not ins
 # Get VPC and subnet information
 print_status "🔍 Getting VPC and subnet information..."
 
-# Get default VPC or first available VPC
-VPC_ID=$(aws ec2 describe-vpcs --region $AWS_REGION --query 'Vpcs[0].VpcId' --output text)
+# Try to find citusflo-vpc first, fallback to first available VPC
+VPC_ID=$(aws ec2 describe-vpcs --region $AWS_REGION --filters "Name=tag:Name,Values=citusflo-vpc" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+if [ "$VPC_ID" = "None" ] || [ -z "$VPC_ID" ]; then
+    print_warning "citusflo-vpc not found, using first available VPC"
+    VPC_ID=$(aws ec2 describe-vpcs --region $AWS_REGION --query 'Vpcs[0].VpcId' --output text)
+fi
+
 if [ "$VPC_ID" = "None" ] || [ -z "$VPC_ID" ]; then
     print_error "No VPC found in region $AWS_REGION"
     exit 1
@@ -100,11 +105,17 @@ fi
 
 print_status "Using VPC: $VPC_ID"
 
-# Get all subnets in the VPC
+# Get all subnets in the VPC with their public/private status
 ALL_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
 
-# Get public subnets for ALB (first 2 subnets)
-ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[:2].SubnetId' --output text | tr '\t' ',')
+# Get public subnets for ALB (subnets with MapPublicIpOnLaunch=true)
+ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+
+# If no public subnets found, use first 2 subnets as fallback
+if [ -z "$ALB_SUBNETS" ]; then
+    print_warning "No public subnets found, using first 2 subnets"
+    ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[:2].SubnetId' --output text | tr '\t' ',')
+fi
 
 print_status "All subnets: $ALL_SUBNETS"
 print_status "ALB subnets: $ALB_SUBNETS"
@@ -185,6 +196,8 @@ if [ "$CUSTOM_DOMAIN" = "true" ]; then
             ParameterKey=SecretKey,ParameterValue="$SECRET_KEY" \
             ParameterKey=JWTSecretKey,ParameterValue="$JWT_SECRET" \
             ParameterKey=DomainName,ParameterValue="$API_SUBDOMAIN" \
+            ParameterKey=CertificateArn,ParameterValue="arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37" \
+            ParameterKey=HostedZoneId,ParameterValue="Z074839530U7S7LIQMR0M" \
         --tags \
             Key=Project,Value=CitusFlo \
             Key=Environment,Value=Production \
@@ -203,6 +216,9 @@ else
             ParameterKey=DatabasePassword,ParameterValue="$DB_PASSWORD" \
             ParameterKey=SecretKey,ParameterValue="$SECRET_KEY" \
             ParameterKey=JWTSecretKey,ParameterValue="$JWT_SECRET" \
+            ParameterKey=DomainName,ParameterValue="api.citusflo.com" \
+            ParameterKey=CertificateArn,ParameterValue="arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37" \
+            ParameterKey=HostedZoneId,ParameterValue="Z074839530U7S7LIQMR0M" \
         --tags \
             Key=Project,Value=CitusFlo \
             Key=Environment,Value=Production \
