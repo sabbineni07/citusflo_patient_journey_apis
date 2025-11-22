@@ -1,10 +1,18 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
+from sqlalchemy import or_
 from app.models.user import User
 from app.models.patient import Patient
 from app.services.patient_service import PatientService
 from app.utils.validators import validate_patient_data
+from app.utils.access_control import (
+    filter_patients_by_access,
+    can_access_patient,
+    can_modify_patient,
+    can_create_patient,
+    can_delete_patient
+)
 from datetime import datetime, timedelta
 import json
 
@@ -33,17 +41,19 @@ def get_case_manager_records():
         # Build query
         query = Patient.query
         
-        # Filter by facility if specified (admin can see all, users see only their facility)
-        if user.role_name != 'admin' and user.facility_id:
-            query = query.filter(Patient.facility_id == user.facility_id)
-        elif facility_id:
+        # Apply access control filtering (replaces old facility-based filtering)
+        query = filter_patients_by_access(query, user)
+        
+        # Apply additional facility filter if specified (for filtering within allowed scope)
+        if facility_id:
+            # Only apply if user has access to patients from that facility
             query = query.filter(Patient.facility_id == int(facility_id))
         
         # Apply search filter
         if search:
             search_term = f"%{search}%"
             query = query.filter(
-                db.or_(
+                or_(
                     Patient.patient_name.ilike(search_term),
                     Patient.case_manager_name.ilike(search_term),
                     Patient.facility_name.ilike(search_term),
@@ -196,10 +206,11 @@ def get_case_manager_stats():
         # Build base query
         query = Patient.query
         
-        # Filter by facility if specified (admin can see all, users see only their facility)
-        if user.role_name != 'admin' and user.facility_id:
-            query = query.filter(Patient.facility_id == user.facility_id)
-        elif facility_id:
+        # Apply access control filtering (replaces old facility-based filtering)
+        query = filter_patients_by_access(query, user)
+        
+        # Apply additional facility filter if specified
+        if facility_id:
             query = query.filter(Patient.facility_id == int(facility_id))
         
         # Apply date filters
@@ -251,13 +262,19 @@ def get_case_manager_stats():
 @case_manager_records_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_case_manager_record():
-    """Create a new case manager record"""
+    """Create a new case manager record - admin and clinician"""
     try:
         user_id = get_jwt_identity()
         user = User.query.get(int(user_id))
         
         if not user:
             return jsonify({'error': 'User not found'}), 404
+        
+        # Check if user can create patients (admin and clinician)
+        if not can_create_patient(user):
+            return jsonify({
+                'error': 'Access denied. Only administrators and clinicians can create records.'
+            }), 403
         
         data = request.get_json()
         
@@ -323,7 +340,7 @@ def create_case_manager_record():
 @case_manager_records_bp.route('/<int:record_id>', methods=['PUT'])
 @jwt_required()
 def update_case_manager_record(record_id):
-    """Update an existing case manager record"""
+    """Update an existing case manager record - admin and clinician only"""
     try:
         user_id = get_jwt_identity()
         user = User.query.get(int(user_id))
@@ -335,6 +352,12 @@ def update_case_manager_record(record_id):
         
         if not patient:
             return jsonify({'error': 'Record not found'}), 404
+        
+        # Check if user can modify this patient
+        if not can_modify_patient(user, patient):
+            return jsonify({
+                'error': 'Access denied. You do not have permission to modify this record.'
+            }), 403
         
         data = request.get_json()
         
@@ -406,14 +429,16 @@ def delete_case_manager_record(record_id):
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Only allow admin users to delete records
-        if user.role_name != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        
         patient = Patient.query.get(record_id)
         
         if not patient:
             return jsonify({'error': 'Record not found'}), 404
+        
+        # Check if user can delete this patient (admin only)
+        if not can_delete_patient(user, patient):
+            return jsonify({
+                'error': 'Access denied. Only administrators can delete records.'
+            }), 403
         
         # Delete patient record
         patient_service.delete_patient(patient)

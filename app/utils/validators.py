@@ -141,4 +141,24 @@ def validate_patient_data(data, is_update=False):
             except (ValueError, TypeError):
                 errors.append('Facility ID must be a valid integer')
     
+    # Hospital ID validation
+    if data.get('hospital_id'):
+        hospital_id = data['hospital_id']
+        if hospital_id and str(hospital_id).strip():
+            try:
+                hospital_id_int = int(hospital_id)
+                # Validate hospital exists
+                from app.models.hospital import Hospital
+                hospital = Hospital.query.get(hospital_id_int)
+                if not hospital:
+                    errors.append(f'Hospital ID {hospital_id_int} does not exist')
+            except (ValueError, TypeError):
+                errors.append('Hospital ID must be a valid integer')
+    
+    # Hospital Name validation (if provided, validate format)
+    if data.get('hospitalName'):
+        hospital_name = data.get('hospitalName')
+        if hospital_name and len(hospital_name.strip()) < 2:
+            errors.append('Hospital name must be at least 2 characters long')
+    
     return errors

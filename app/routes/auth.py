@@ -44,6 +44,7 @@ def register():
         # Check if Authorization header is present (optional - for admin registration)
         auth_header = request.headers.get('Authorization')
         is_admin_creating = False
+        current_user = None
         
         if auth_header and auth_header.startswith('Bearer '):
             try:
@@ -62,9 +63,9 @@ def register():
         if not is_admin_creating and (data.get('role') == 'admin' or data.get('role_name') == 'admin'):
             return jsonify({'error': 'Cannot create admin user without admin privileges'}), 403
         
-        # Create new user
+        # Create new user - pass current_user for inheritance (home_health_id, etc.)
         try:
-            user = auth_service.create_user(data)
+            user = auth_service.create_user(data, created_by_user=current_user)
         except IntegrityError as e:
             # Handle database unique constraint violations
             db.session.rollback()
@@ -109,19 +110,36 @@ def login():
     try:
         data = request.get_json()
         
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
         # Validate input data
         validation_errors = validate_login_data(data)
         if validation_errors:
             return jsonify({'errors': validation_errors}), 400
         
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username:
+            return jsonify({'error': 'Username is required'}), 400
+        
+        if not password:
+            return jsonify({'error': 'Password is required'}), 400
+        
         # Authenticate user
-        user = auth_service.authenticate_user(data['username'], data['password'])
+        user = auth_service.authenticate_user(username, password)
         
         if not user:
+            # Log for debugging (don't expose which part failed for security)
+            import logging
+            logging.warning(f'Failed login attempt for username: {username}')
             return jsonify({'error': 'Invalid credentials'}), 401
         
         if not user.is_active:
-            return jsonify({'error': 'Account is deactivated'}), 401
+            import logging
+            logging.warning(f'Login attempt for inactive account: {username}')
+            return jsonify({'error': 'Account is deactivated. Please contact administrator.'}), 401
         
         # Create access token
         access_token = create_access_token(identity=str(user.id))
@@ -235,23 +253,32 @@ def get_all_users():
         if not current_user:
             return jsonify({'error': 'User not found'}), 404
         
+        # Block clinician access (patient-only)
+        if current_user.role_name == 'clinician':
+            return jsonify({'error': 'Access denied. Clinicians can only access patient data.'}), 403
+        
         # Build query - start with active users
         query = User.query.filter_by(is_active=True)
         
-        # If user is admin and belongs to a home_health account, filter by home_health_id
-        if current_user.role_name == 'admin' and current_user.home_health_id:
-            # Admin users can only see users from their same home_health account
-            query = query.filter_by(home_health_id=current_user.home_health_id)
-        elif current_user.role_name != 'admin':
-            # Non-admin users can only see users from their same home_health account
+        # Filter by role and organization
+        if current_user.role_name == 'case_manager':
+            # case_manager can only see users from their facility (if any)
+            if current_user.facility_id:
+                query = query.filter_by(facility_id=current_user.facility_id)
+            else:
+                # No facility - only themselves
+                query = query.filter_by(id=current_user.id)
+        elif current_user.role_name == 'admin':
+            # Admin users filter by home_health_id if they have one
+            if current_user.home_health_id:
+                query = query.filter_by(home_health_id=current_user.home_health_id)
+            # If admin has no home_health_id, they can see all users (super admin)
+        else:
+            # Other roles - filter by home_health_id
             if current_user.home_health_id:
                 query = query.filter_by(home_health_id=current_user.home_health_id)
             else:
-                # User without home_health account - return empty or only themselves
                 query = query.filter_by(id=current_user.id)
-        
-        # If admin user has no home_health_id, they can see all users (super admin)
-        # This allows for system-wide admin access
         
         users = query.order_by(User.username).all()
         

@@ -9,8 +9,13 @@ from sqlalchemy.exc import IntegrityError
 class AuthService:
     """Service class for authentication operations"""
     
-    def create_user(self, user_data):
-        """Create a new user"""
+    def create_user(self, user_data, created_by_user=None):
+        """Create a new user
+        
+        Args:
+            user_data: Dictionary containing user data
+            created_by_user: Optional User object who is creating this user (for inheritance)
+        """
         # Handle facility creation/assignment
         facility_id = user_data.get('facility_id')
         facility_name = user_data.get('facility_name')
@@ -44,7 +49,12 @@ class AuthService:
             except (ValueError, TypeError):
                 home_health_id = None
         else:
-            home_health_id = None
+            # If home_health_id not provided and created_by_user is an admin, inherit it
+            if created_by_user and created_by_user.home_health_id:
+                # Inherit from admin user if they have a home_health_id
+                home_health_id = created_by_user.home_health_id
+            else:
+                home_health_id = None
         
         # Handle role assignment - use role_id or role name
         role_id = None

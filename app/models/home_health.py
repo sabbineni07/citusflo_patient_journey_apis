@@ -16,6 +16,16 @@ class HomeHealth(db.Model):
     # Relationship with users (backref defined in User model)
     # Users can have roles: admin, clinicians, case_manager
     
+    # Relationship with hospitals (many-to-many via junction table)
+    # Note: The junction table is defined in hospital.py
+    # We use string reference to avoid circular import
+    hospitals = db.relationship(
+        'Hospital',
+        secondary='home_health_hospitals',
+        back_populates='home_health_agencies',
+        lazy=True
+    )
+    
     def to_dict(self):
         """Convert home health agency to dictionary"""
         return {

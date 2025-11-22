@@ -10,6 +10,7 @@ class Patient(db.Model):
     phone_number = db.Column(db.String(20), nullable=False)
     facility_name = db.Column(db.String(100), nullable=False)
     facility_id = db.Column(db.Integer, db.ForeignKey('facilities.id'), nullable=True)
+    home_health_id = db.Column(db.Integer, db.ForeignKey('home_health.id'), nullable=True)
     patient_name = db.Column(db.String(100), nullable=False)
     date = db.Column(db.Date, nullable=False)
     referral_received = db.Column(db.Boolean, default=False)
@@ -27,6 +28,9 @@ class Patient(db.Model):
     
     # Relationship with facility
     facility = db.relationship('Facility', lazy=True)
+    
+    # Relationship with home health agency
+    home_health = db.relationship('HomeHealth', lazy=True)
     
     def to_dict(self):
         """Convert patient to dictionary"""
@@ -47,6 +51,8 @@ class Patient(db.Model):
             'facilityName': self.facility_name,
             'facility_id': self.facility_id,
             'facility_name_from_relation': self.facility.name if self.facility else None,
+            'home_health_id': self.home_health_id,
+            'home_health_name': self.home_health.name if self.home_health else None,
             'patientName': self.patient_name,
             'date': self.date.isoformat() if self.date else None,
             'referralReceived': self.referral_received,
