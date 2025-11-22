@@ -41,3 +41,4 @@ class Role(db.Model):
     def __repr__(self):
         return f'<Role {self.id}: {self.name}>'
 
+

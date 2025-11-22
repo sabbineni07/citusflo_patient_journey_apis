@@ -34,3 +34,4 @@ class WebAuthnCredential(db.Model):
         return f'<WebAuthnCredential {self.credential_id[:20]}...>'
 
 
+

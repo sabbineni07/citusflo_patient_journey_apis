@@ -6,6 +6,7 @@ from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask import request
 import os
 import logging
 from dotenv import load_dotenv
@@ -13,14 +14,33 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Custom key function to exclude OPTIONS requests from rate limiting
+def rate_limit_key_func():
+    """Custom key function that excludes OPTIONS requests from rate limiting"""
+    if request.method == 'OPTIONS':
+        # Return None to skip rate limiting for OPTIONS requests
+        return None
+    return get_remote_address()
+
 # Initialize extensions
 db = SQLAlchemy()
 migrate = Migrate()
 jwt = JWTManager()
 bcrypt = Bcrypt()
+
+# Get rate limits from environment or use defaults
+# Development: More permissive limits
+# Production: Stricter limits
+flask_env = os.getenv('FLASK_ENV', 'development')
+if flask_env == 'production':
+    default_limits = os.getenv('RATE_LIMIT', "1000 per day, 200 per hour, 60 per minute")
+else:
+    # Development: Much more permissive
+    default_limits = os.getenv('RATE_LIMIT', "10000 per day, 1000 per hour, 200 per minute")
+
 limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    key_func=rate_limit_key_func,
+    default_limits=[default_limits],
     storage_uri="memory://"  # Use Redis in production: "redis://localhost:6379"
 )
 
@@ -67,13 +87,11 @@ def create_app():
     # Register blueprints
     from app.routes.auth import auth_bp
     from app.routes.patients import patients_bp
-    from app.routes.case_manager_records import case_manager_records_bp
     from app.routes.facilities import facilities_bp
     from app.routes.webauthn import webauthn_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(patients_bp, url_prefix='/api/patients')
-    app.register_blueprint(case_manager_records_bp, url_prefix='/api/case-manager-records')
     app.register_blueprint(facilities_bp, url_prefix='/api/facilities')
     app.register_blueprint(webauthn_bp, url_prefix='/api/auth/webauthn')
     
@@ -89,6 +107,17 @@ def create_app():
         from app.models.user import User
         
         db.create_all()
+        
+        # Seed roles first (inline to avoid circular dependencies)
+        from app.models.role import Role
+        predefined_roles = [
+            {'name': 'admin', 'description': 'Administrator with full system access'},
+            {'name': 'clinician', 'description': 'Clinical staff member'},
+            {'name': 'case_manager', 'description': 'Case manager responsible for patient coordination'}
+        ]
+        for role_data in predefined_roles:
+            Role.get_or_create(role_data['name'], role_data['description'])
+        print("✅ Roles seeded successfully")
         
         # Create admin user if it doesn't exist
         admin_user = User.query.filter_by(username='admin').first()
@@ -106,6 +135,142 @@ def create_app():
             print("Admin user created: username=admin, password=admin123")
         
         print("Database initialized successfully!")
+    
+    @app.cli.command()
+    def seed_roles():
+        """Seed/rebuild the roles table with predefined roles
+        
+        IMPORTANT: This preserves role IDs to maintain foreign key relationships.
+        If a role is missing, it will be recreated with the same ID.
+        """
+        from app.models.role import Role
+        from app.models.user import User
+        from sqlalchemy.exc import IntegrityError
+        
+        # Define the predefined roles with their standard IDs
+        # These IDs are stable to preserve foreign key relationships
+        predefined_roles = [
+            {
+                'id': 1,
+                'name': 'admin',
+                'description': 'Administrator with full system access'
+            },
+            {
+                'id': 2,
+                'name': 'clinician',
+                'description': 'Clinical staff member'
+            },
+            {
+                'id': 3,
+                'name': 'case_manager',
+                'description': 'Case manager responsible for patient coordination'
+            }
+        ]
+        
+        created_count = 0
+        updated_count = 0
+        existing_count = 0
+        skipped_count = 0
+        
+        for role_data in predefined_roles:
+            role_id = role_data['id']
+            role_name = role_data['name']
+            
+            # Check if role exists by ID
+            role_by_id = Role.query.get(role_id)
+            
+            # Check if role exists by name (might have different ID)
+            role_by_name = Role.query.filter_by(name=role_name).first()
+            
+            if role_by_id:
+                # Role with correct ID exists
+                if role_by_id.name != role_name:
+                    # ID exists but name doesn't match - this shouldn't happen with predefined roles
+                    print(f"⚠️  WARNING: Role ID {role_id} exists but name is '{role_by_id.name}' (expected '{role_name}')")
+                    # Don't update - might be intentional custom role
+                    skipped_count += 1
+                else:
+                    # Update description if it changed
+                    if role_by_id.description != role_data['description']:
+                        role_by_id.description = role_data['description']
+                        updated_count += 1
+                        print(f"🔄 Updated role: {role_name} (ID: {role_id})")
+                    else:
+                        existing_count += 1
+                        print(f"✓ Role already exists: {role_name} (ID: {role_id})")
+            elif role_by_name:
+                # Role exists with different ID - check if users are using it
+                users_with_role = User.query.filter_by(role_id=role_by_name.id).count()
+                if users_with_role > 0:
+                    print(f"⚠️  WARNING: Role '{role_name}' exists with ID {role_by_name.id} (expected {role_id})")
+                    print(f"   - {users_with_role} users are assigned to this role")
+                    print(f"   - Keeping existing ID to preserve relationships")
+                    # Update description but keep existing ID
+                    if role_by_name.description != role_data['description']:
+                        role_by_name.description = role_data['description']
+                        updated_count += 1
+                    skipped_count += 1
+                else:
+                    # No users using it, can safely delete and recreate with correct ID
+                    print(f"🔄 Recreating role '{role_name}' with correct ID {role_id} (was {role_by_name.id})")
+                    db.session.delete(role_by_name)
+                    role = Role(id=role_id, name=role_name, description=role_data['description'])
+                    db.session.add(role)
+                    created_count += 1
+            else:
+                # Role doesn't exist - create with predefined ID
+                try:
+                    # Check if ID is already taken by a different role
+                    existing_role_at_id = Role.query.get(role_id)
+                    if existing_role_at_id:
+                        print(f"⚠️  WARNING: Cannot create role '{role_name}' with ID {role_id} - ID already taken by '{existing_role_at_id.name}'")
+                        skipped_count += 1
+                    else:
+                        # Create role with explicit ID to preserve foreign keys
+                        role = Role(id=role_id, name=role_name, description=role_data['description'])
+                        db.session.add(role)
+                        created_count += 1
+                        print(f"✅ Created role: {role_name} (ID: {role_id})")
+                except IntegrityError as e:
+                    print(f"❌ ERROR: Failed to create role '{role_name}': {e}")
+                    db.session.rollback()
+                    skipped_count += 1
+        
+        try:
+            db.session.commit()
+        except IntegrityError as e:
+            db.session.rollback()
+            print(f"\n❌ ERROR: Failed to commit roles: {e}")
+            print("   This might be due to ID conflicts. Please check the database.")
+            return
+        
+        print(f"\n📊 Roles Summary:")
+        print(f"  - Created: {created_count}")
+        print(f"  - Updated: {updated_count}")
+        print(f"  - Existing: {existing_count}")
+        print(f"  - Skipped: {skipped_count}")
+        print(f"  - Total: {len(predefined_roles)}")
+        
+        # Verify all roles exist
+        all_exist = True
+        for role_data in predefined_roles:
+            role = Role.query.get(role_data['id'])
+            if not role or role.name != role_data['name']:
+                print(f"  ⚠️  Missing or incorrect: {role_data['name']}")
+                all_exist = False
+        
+        if all_exist:
+            print("✅ All predefined roles exist with correct IDs!")
+        
+        return created_count, updated_count, existing_count
+    
+    # Auto-seed roles on app startup (if enabled via environment variable)
+    if os.getenv('AUTO_SEED_ROLES', 'false').lower() == 'true':
+        with app.app_context():
+            try:
+                seed_roles()
+            except Exception as e:
+                logging.warning(f"Failed to auto-seed roles on startup: {e}")
     
     return app
 
