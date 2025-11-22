@@ -1,5 +1,6 @@
 from app import db
 from datetime import datetime
+import json
 
 class Patient(db.Model):
     __tablename__ = 'patients'
@@ -19,6 +20,7 @@ class Patient(db.Model):
     admitted = db.Column(db.Boolean, default=False)
     care_follow_up = db.Column(db.Boolean, default=False)
     form_content = db.Column(db.Text)
+    forms = db.Column(db.JSON, default=list)  # JSON field to store array of forms
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -28,13 +30,23 @@ class Patient(db.Model):
     
     def to_dict(self):
         """Convert patient to dictionary"""
+        # Handle forms - ensure it's always a list
+        forms_data = self.forms if self.forms is not None else []
+        if isinstance(forms_data, str):
+            try:
+                forms_data = json.loads(forms_data)
+            except (json.JSONDecodeError, TypeError):
+                forms_data = []
+        if not isinstance(forms_data, list):
+            forms_data = []
+        
         return {
             'id': str(self.id),
             'caseManagerName': self.case_manager_name,
             'phoneNumber': self.phone_number,
             'facilityName': self.facility_name,
             'facility_id': self.facility_id,
-            'facility_name_from_relation': self.facility_ref.name if self.facility_ref else None,
+            'facility_name_from_relation': self.facility.name if self.facility else None,
             'patientName': self.patient_name,
             'date': self.date.isoformat() if self.date else None,
             'referralReceived': self.referral_received,
@@ -45,6 +57,7 @@ class Patient(db.Model):
             'admitted': self.admitted,
             'careFollowUp': self.care_follow_up,
             'formContent': self.form_content,
+            'forms': forms_data,  # Include forms array
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()

@@ -1,27 +1,22 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, get_jwt
-from app import db
+from app import db, limiter
 from app.models.user import User
+from app.models.role import Role
 from app.services.auth_service import AuthService
 from app.utils.validators import validate_user_data, validate_login_data
 from datetime import datetime, timedelta
+from sqlalchemy.exc import IntegrityError
+import os
 import re
 
 auth_bp = Blueprint('auth', __name__)
 auth_service = AuthService()
 
 @auth_bp.route('/register', methods=['POST'])
-@jwt_required()
 def register():
-    """Register a new user (admin only)"""
+    """Register a new user (public endpoint, but admin can create other users)"""
     try:
-        # Check if current user is admin
-        current_user_id = get_jwt_identity()
-        current_user = User.query.get(int(current_user_id))
-        
-        if not current_user or current_user.role != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        
         data = request.get_json()
         
         # Validate input data
@@ -29,15 +24,71 @@ def register():
         if validation_errors:
             return jsonify({'errors': validation_errors}), 400
         
-        # Check if user already exists
-        if User.query.filter_by(username=data['username']).first():
-            return jsonify({'error': 'Username already exists'}), 400
+        # Check if user already exists (case-insensitive check for better UX)
+        existing_username = User.query.filter(db.func.lower(User.username) == db.func.lower(data['username'])).first()
+        if existing_username:
+            return jsonify({'error': 'Username already exists. Please choose a different username.'}), 400
         
-        if User.query.filter_by(email=data['email']).first():
-            return jsonify({'error': 'Email already exists'}), 400
+        # Check for existing email (case-insensitive)
+        email_to_check = data['email'].strip().lower() if data.get('email') else ''
+        existing_email = User.query.filter(db.func.lower(User.email) == db.func.lower(email_to_check)).first()
+        if existing_email:
+            # Log for debugging (don't expose existing user's email in production)
+            import logging
+            logging.info(f'Registration attempted with existing email: {email_to_check}')
+            return jsonify({
+                'error': 'Email already exists. Please use a different email address.',
+                'hint': 'If you believe this is an error, the email may already be registered. Try logging in instead.'
+            }), 400
+        
+        # Check if Authorization header is present (optional - for admin registration)
+        auth_header = request.headers.get('Authorization')
+        is_admin_creating = False
+        
+        if auth_header and auth_header.startswith('Bearer '):
+            try:
+                from flask_jwt_extended import decode_token
+                token = auth_header.split(' ')[1]
+                decoded = decode_token(token)
+                current_user_id = decoded.get('sub')
+                if current_user_id:
+                    current_user = User.query.get(int(current_user_id))
+                    is_admin_creating = current_user and current_user.role_name == 'admin'
+            except:
+                # If token is invalid, treat as public registration
+                pass
+        
+        # For public registration, ensure role is not admin (security measure)
+        if not is_admin_creating and (data.get('role') == 'admin' or data.get('role_name') == 'admin'):
+            return jsonify({'error': 'Cannot create admin user without admin privileges'}), 403
         
         # Create new user
-        user = auth_service.create_user(data)
+        try:
+            user = auth_service.create_user(data)
+        except IntegrityError as e:
+            # Handle database unique constraint violations
+            db.session.rollback()
+            
+            # Extract error message from IntegrityError
+            error_str = ''
+            if hasattr(e, 'orig') and e.orig:
+                error_str = str(e.orig).lower()
+            elif hasattr(e, 'args') and e.args:
+                error_str = str(e.args[0]).lower()
+            else:
+                error_str = str(e).lower()
+            
+            # Check if it's a username or email violation
+            # PostgreSQL error messages typically include constraint names or field names
+            if 'username' in error_str or 'users_username_key' in error_str or 'unique_username' in error_str:
+                return jsonify({'error': 'Username already exists. Please choose a different username.'}), 400
+            elif 'email' in error_str or 'users_email_key' in error_str or 'unique_email' in error_str:
+                return jsonify({'error': 'Email already exists. Please use a different email address.'}), 400
+            else:
+                # Generic duplicate error - try to be more specific
+                if 'duplicate key' in error_str or 'unique constraint' in error_str:
+                    return jsonify({'error': 'A user with this information already exists. Please check your username and email.'}), 400
+                return jsonify({'error': 'Registration failed. Please try again with different information.'}), 400
         
         return jsonify({
             'success': True,
@@ -46,6 +97,10 @@ def register():
         }), 201
         
     except Exception as e:
+        db.session.rollback()
+        # Log the error for debugging
+        import logging
+        logging.error(f'Registration error: {str(e)}', exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/login', methods=['POST'])
@@ -167,14 +222,56 @@ def change_password():
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/users', methods=['GET'])
+@jwt_required()
+@limiter.limit("100 per minute")  # Per-minute limit
+@limiter.limit("1000 per day")    # Per-day limit
 def get_all_users():
-    """Get all users for user selection"""
+    """Get all users - filtered by home_health_id for admin users"""
     try:
-        users = User.query.filter_by(is_active=True).all()
+        # Get current user
+        current_user_id = get_jwt_identity()
+        current_user = User.query.get(int(current_user_id))
+        
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Build query - start with active users
+        query = User.query.filter_by(is_active=True)
+        
+        # If user is admin and belongs to a home_health account, filter by home_health_id
+        if current_user.role_name == 'admin' and current_user.home_health_id:
+            # Admin users can only see users from their same home_health account
+            query = query.filter_by(home_health_id=current_user.home_health_id)
+        elif current_user.role_name != 'admin':
+            # Non-admin users can only see users from their same home_health account
+            if current_user.home_health_id:
+                query = query.filter_by(home_health_id=current_user.home_health_id)
+            else:
+                # User without home_health account - return empty or only themselves
+                query = query.filter_by(id=current_user.id)
+        
+        # If admin user has no home_health_id, they can see all users (super admin)
+        # This allows for system-wide admin access
+        
+        users = query.order_by(User.username).all()
         
         return jsonify({
             'success': True,
             'data': [user.to_dict() for user in users]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/roles', methods=['GET'])
+def get_roles():
+    """Get all available roles"""
+    try:
+        roles = Role.query.order_by(Role.name).all()
+        
+        return jsonify({
+            'success': True,
+            'data': [role.to_dict() for role in roles]
         }), 200
         
     except Exception as e:
@@ -284,7 +381,7 @@ def update_user(user_id):
         current_user_id = get_jwt_identity()
         current_user = User.query.get(int(current_user_id))
         
-        if not current_user or current_user.role != 'admin':
+        if not current_user or current_user.role_name != 'admin':
             return jsonify({'error': 'Admin access required'}), 403
         
         user = User.query.get(user_id)
@@ -328,9 +425,23 @@ def update_user(user_id):
         if 'last_name' in data and len(data['last_name']) < 2:
             validation_errors.append('Last name must be at least 2 characters long')
         
-        # Role validation
-        if 'role' in data and data['role'] not in ['user', 'admin', 'doctor', 'nurse']:
-            validation_errors.append('Role must be one of: user, admin, doctor, nurse')
+        # Role validation - check role_id or role name
+        if 'role_id' in data:
+            from app.models.role import Role
+            try:
+                role_id = int(data['role_id'])
+                role = Role.query.get(role_id)
+                if not role:
+                    valid_roles = [r.name for r in Role.query.all()]
+                    validation_errors.append(f'Role ID {role_id} does not exist. Valid roles: {", ".join(valid_roles)}')
+            except (ValueError, TypeError):
+                validation_errors.append('Role ID must be a valid integer')
+        elif 'role' in data:
+            from app.models.role import Role
+            role = Role.query.filter_by(name=data['role']).first()
+            if not role:
+                valid_roles = [r.name for r in Role.query.all()]
+                validation_errors.append(f'Role must be one of: {", ".join(valid_roles)}')
         
         if validation_errors:
             return jsonify({'errors': validation_errors}), 400
@@ -354,8 +465,21 @@ def update_user(user_id):
             user.first_name = data['first_name']
         if 'last_name' in data:
             user.last_name = data['last_name']
-        if 'role' in data:
-            user.role = data['role']
+        # Handle role update - use role_id or role name
+        if 'role_id' in data:
+            from app.models.role import Role
+            try:
+                role_id = int(data['role_id'])
+                role = Role.query.get(role_id)
+                if role:
+                    user.role_id = role_id
+            except (ValueError, TypeError):
+                pass  # Invalid role_id, skip
+        elif 'role' in data:
+            from app.models.role import Role
+            role = Role.query.filter_by(name=data['role']).first()
+            if role:
+                user.role_id = role.id
         if 'facility_name' in data:
             # Handle facility_name - get or create facility
             from app.models.facility import Facility
@@ -410,7 +534,7 @@ def delete_user(user_id):
         current_user_id = get_jwt_identity()
         current_user = User.query.get(int(current_user_id))
         
-        if not current_user or current_user.role != 'admin':
+        if not current_user or current_user.role_name != 'admin':
             return jsonify({'error': 'Admin access required'}), 403
         
         user = User.query.get(user_id)

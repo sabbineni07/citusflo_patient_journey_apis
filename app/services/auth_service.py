@@ -1,7 +1,10 @@
 from app import db
 from app.models.user import User
 from app.models.facility import Facility
+from app.models.home_health import HomeHealth
+from app.models.role import Role
 from datetime import datetime
+from sqlalchemy.exc import IntegrityError
 
 class AuthService:
     """Service class for authentication operations"""
@@ -29,13 +32,45 @@ class AuthService:
         else:
             facility_id = None
             
+        # Handle home_health creation/assignment
+        home_health_id = user_data.get('home_health_id')
+        if home_health_id and str(home_health_id).strip():
+            try:
+                home_health_id = int(home_health_id)
+                # Verify home_health exists
+                home_health = HomeHealth.query.get(home_health_id)
+                if not home_health:
+                    home_health_id = None
+            except (ValueError, TypeError):
+                home_health_id = None
+        else:
+            home_health_id = None
+        
+        # Handle role assignment - use role_id or role name
+        role_id = None
+        if user_data.get('role_id'):
+            try:
+                role_id = int(user_data['role_id'])
+                # Verify role exists
+                role = Role.query.get(role_id)
+                if not role:
+                    role_id = None
+            except (ValueError, TypeError):
+                role_id = None
+        elif user_data.get('role'):
+            # Get role by name
+            role = Role.query.filter_by(name=user_data['role']).first()
+            if role:
+                role_id = role.id
+        
         user = User(
             username=user_data['username'],
             email=user_data['email'],
             first_name=user_data['first_name'],
             last_name=user_data['last_name'],
-            role=user_data.get('role', 'user'),
+            role_id=role_id,
             facility_id=facility_id,
+            home_health_id=home_health_id,
             is_active=user_data.get('is_active', True)
         )
         
@@ -43,8 +78,14 @@ class AuthService:
         user.set_password(user_data['password'])
         
         # Save to database
-        db.session.add(user)
-        db.session.commit()
+        try:
+            db.session.add(user)
+            db.session.commit()
+        except IntegrityError as e:
+            # Rollback the session on integrity error
+            db.session.rollback()
+            # Re-raise to let the route handle it
+            raise
         
         return user
     

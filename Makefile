@@ -2,6 +2,8 @@
 
 .PHONY: help install test test-unit test-integration test-e2e test-coverage lint format clean docker-build docker-run docker-dev docker-prod docker-stop migrate init-db
 
+DOCKER_COMPOSE := $(shell command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo docker compose)
+
 # Default target
 help:
 	@echo "Available commands:"
@@ -24,7 +26,7 @@ help:
 
 # Install dependencies
 install:
-	pip install -r requirements.txt
+	python3 -m pip install -r requirements.txt
 
 # Testing
 test:
@@ -70,14 +72,14 @@ docker-run:
 	docker run -p 5000:5000 --env-file .env citusflo-patient-journey-api
 
 docker-dev:
-	docker-compose -f docker-compose.dev.yml up --build
+	$(DOCKER_COMPOSE) -f docker-compose.dev.yml up --build
 
 docker-prod:
-	docker-compose up --build
+	$(DOCKER_COMPOSE) up --build
 
 docker-stop:
-	docker-compose down
-	docker-compose -f docker-compose.dev.yml down
+	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) -f docker-compose.dev.yml down
 
 # Database commands
 migrate:

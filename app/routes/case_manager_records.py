@@ -4,7 +4,9 @@ from app import db
 from app.models.user import User
 from app.models.patient import Patient
 from app.services.patient_service import PatientService
+from app.utils.validators import validate_patient_data
 from datetime import datetime, timedelta
+import json
 
 case_manager_records_bp = Blueprint('case_manager_records', __name__)
 patient_service = PatientService()
@@ -32,7 +34,7 @@ def get_case_manager_records():
         query = Patient.query
         
         # Filter by facility if specified (admin can see all, users see only their facility)
-        if user.role != 'admin' and user.facility_id:
+        if user.role_name != 'admin' and user.facility_id:
             query = query.filter(Patient.facility_id == user.facility_id)
         elif facility_id:
             query = query.filter(Patient.facility_id == int(facility_id))
@@ -77,6 +79,16 @@ def get_case_manager_records():
         # Transform to case manager records format
         records = []
         for patient in patients:
+            # Handle forms - ensure it's always a list
+            forms_data = patient.forms if patient.forms is not None else []
+            if isinstance(forms_data, str):
+                try:
+                    forms_data = json.loads(forms_data)
+                except (json.JSONDecodeError, TypeError):
+                    forms_data = []
+            if not isinstance(forms_data, list):
+                forms_data = []
+            
             record = {
                 'id': str(patient.id),
                 'caseManagerName': patient.case_manager_name,
@@ -94,6 +106,7 @@ def get_case_manager_records():
                 'admitted': patient.admitted,
                 'careFollowUp': patient.care_follow_up,
                 'formContent': patient.form_content,
+                'forms': forms_data,  # Include forms array
                 'created_at': patient.created_at.isoformat(),
                 'updated_at': patient.updated_at.isoformat()
             }
@@ -126,6 +139,16 @@ def get_case_manager_record(record_id):
         if not patient:
             return jsonify({'error': 'Record not found'}), 404
         
+        # Handle forms - ensure it's always a list
+        forms_data = patient.forms if patient.forms is not None else []
+        if isinstance(forms_data, str):
+            try:
+                forms_data = json.loads(forms_data)
+            except (json.JSONDecodeError, TypeError):
+                forms_data = []
+        if not isinstance(forms_data, list):
+            forms_data = []
+        
         record = {
             'id': str(patient.id),
             'caseManagerName': patient.case_manager_name,
@@ -142,6 +165,7 @@ def get_case_manager_record(record_id):
             'admitted': patient.admitted,
             'careFollowUp': patient.care_follow_up,
             'formContent': patient.form_content,
+            'forms': forms_data,  # Include forms array
             'created_at': patient.created_at.isoformat(),
             'updated_at': patient.updated_at.isoformat()
         }
@@ -173,7 +197,7 @@ def get_case_manager_stats():
         query = Patient.query
         
         # Filter by facility if specified (admin can see all, users see only their facility)
-        if user.role != 'admin' and user.facility_id:
+        if user.role_name != 'admin' and user.facility_id:
             query = query.filter(Patient.facility_id == user.facility_id)
         elif facility_id:
             query = query.filter(Patient.facility_id == int(facility_id))
@@ -222,4 +246,182 @@ def get_case_manager_stats():
         }), 200
         
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@case_manager_records_bp.route('/', methods=['POST'])
+@jwt_required()
+def create_case_manager_record():
+    """Create a new case manager record"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(int(user_id))
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        
+        # Validate input data
+        validation_errors = validate_patient_data(data)
+        if validation_errors:
+            return jsonify({'errors': validation_errors}), 400
+        
+        # Create new patient record
+        patient = patient_service.create_patient(data, int(user_id))
+        
+        # Handle forms if provided
+        if 'forms' in data and data['forms']:
+            if isinstance(data['forms'], list):
+                patient.forms = data['forms']
+            else:
+                patient.forms = []
+        else:
+            patient.forms = []
+        
+        db.session.commit()
+        
+        # Get forms data for response
+        forms_data = patient.forms if patient.forms is not None else []
+        if isinstance(forms_data, str):
+            try:
+                forms_data = json.loads(forms_data)
+            except (json.JSONDecodeError, TypeError):
+                forms_data = []
+        if not isinstance(forms_data, list):
+            forms_data = []
+        
+        record = {
+            'id': str(patient.id),
+            'caseManagerName': patient.case_manager_name,
+            'phoneNumber': patient.phone_number,
+            'facilityName': patient.facility_name,
+            'facility_id': str(patient.facility_id) if patient.facility_id else None,
+            'patientName': patient.patient_name,
+            'date': patient.date.isoformat() if patient.date else None,
+            'referralReceived': patient.referral_received,
+            'insuranceVerification': patient.insurance_verification,
+            'familyAndPatientAware': patient.family_and_patient_aware,
+            'inPersonVisit': patient.in_person_visit,
+            'dischargedFromFacility': patient.discharged_from_facility,
+            'admitted': patient.admitted,
+            'careFollowUp': patient.care_follow_up,
+            'formContent': patient.form_content,
+            'forms': forms_data,
+            'created_at': patient.created_at.isoformat(),
+            'updated_at': patient.updated_at.isoformat()
+        }
+        
+        return jsonify({
+            'message': 'Case manager record created successfully',
+            'patient': record
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@case_manager_records_bp.route('/<int:record_id>', methods=['PUT'])
+@jwt_required()
+def update_case_manager_record(record_id):
+    """Update an existing case manager record"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(int(user_id))
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        patient = Patient.query.get(record_id)
+        
+        if not patient:
+            return jsonify({'error': 'Record not found'}), 404
+        
+        data = request.get_json()
+        
+        # Validate input data
+        validation_errors = validate_patient_data(data, is_update=True)
+        if validation_errors:
+            return jsonify({'errors': validation_errors}), 400
+        
+        # Update patient record
+        updated_patient = patient_service.update_patient(patient, data)
+        
+        # Handle forms if provided
+        if 'forms' in data:
+            if isinstance(data['forms'], list):
+                updated_patient.forms = data['forms']
+            else:
+                updated_patient.forms = []
+        
+        db.session.commit()
+        
+        # Get forms data for response
+        forms_data = updated_patient.forms if updated_patient.forms is not None else []
+        if isinstance(forms_data, str):
+            try:
+                forms_data = json.loads(forms_data)
+            except (json.JSONDecodeError, TypeError):
+                forms_data = []
+        if not isinstance(forms_data, list):
+            forms_data = []
+        
+        record = {
+            'id': str(updated_patient.id),
+            'caseManagerName': updated_patient.case_manager_name,
+            'phoneNumber': updated_patient.phone_number,
+            'facilityName': updated_patient.facility_name,
+            'facility_id': str(updated_patient.facility_id) if updated_patient.facility_id else None,
+            'patientName': updated_patient.patient_name,
+            'date': updated_patient.date.isoformat() if updated_patient.date else None,
+            'referralReceived': updated_patient.referral_received,
+            'insuranceVerification': updated_patient.insurance_verification,
+            'familyAndPatientAware': updated_patient.family_and_patient_aware,
+            'inPersonVisit': updated_patient.in_person_visit,
+            'dischargedFromFacility': updated_patient.discharged_from_facility,
+            'admitted': updated_patient.admitted,
+            'careFollowUp': updated_patient.care_follow_up,
+            'formContent': updated_patient.form_content,
+            'forms': forms_data,
+            'created_at': updated_patient.created_at.isoformat(),
+            'updated_at': updated_patient.updated_at.isoformat()
+        }
+        
+        return jsonify({
+            'message': 'Case manager record updated successfully',
+            'patient': record
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@case_manager_records_bp.route('/<int:record_id>', methods=['DELETE'])
+@jwt_required()
+def delete_case_manager_record(record_id):
+    """Delete a case manager record"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(int(user_id))
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Only allow admin users to delete records
+        if user.role_name != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        patient = Patient.query.get(record_id)
+        
+        if not patient:
+            return jsonify({'error': 'Record not found'}), 404
+        
+        # Delete patient record
+        patient_service.delete_patient(patient)
+        
+        return jsonify({
+            'message': 'Case manager record deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500

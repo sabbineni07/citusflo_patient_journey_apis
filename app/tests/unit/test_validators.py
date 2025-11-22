@@ -108,7 +108,7 @@ class TestValidators:
         }
         
         errors = validate_user_data(user_data)
-        assert 'Role must be one of: user, admin, doctor' in errors
+        assert 'Role must be one of: user, admin, doctor, nurse' in errors
     
     def test_validate_login_data_valid(self):
         """Test valid login data validation"""
@@ -132,99 +132,93 @@ class TestValidators:
     def test_validate_patient_data_valid(self):
         """Test valid patient data validation"""
         patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': '1990-01-15',
-            'gender': 'Male',
-            'phone': '+1234567890',
-            'email': 'john.doe@example.com'
+            'caseManagerName': 'John Smith',
+            'phoneNumber': '+1234567890',
+            'facilityName': 'General Hospital',
+            'patientName': 'Jane Doe',
+            'date': '2024-01-15',
+            'referralReceived': True,
+            'insuranceVerification': False,
+            'facility_id': '5'
         }
-        
+
         errors = validate_patient_data(patient_data)
         assert len(errors) == 0
-    
+
     def test_validate_patient_data_missing_required_fields(self):
         """Test patient data validation with missing required fields"""
-        patient_data = {
-            'first_name': 'John'
-        }
-        
+        patient_data = {}
+
         errors = validate_patient_data(patient_data)
-        assert 'last_name is required' in errors
-        assert 'date_of_birth is required' in errors
-        assert 'gender is required' in errors
-    
+        assert 'caseManagerName is required' in errors
+        assert 'phoneNumber is required' in errors
+        assert 'facilityName is required' in errors
+        assert 'patientName is required' in errors
+        assert 'date is required' in errors
+
     def test_validate_patient_data_invalid_date(self):
         """Test patient data validation with invalid date"""
         patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': 'invalid-date',
-            'gender': 'Male'
+            'caseManagerName': 'John Smith',
+            'phoneNumber': '+1234567890',
+            'facilityName': 'General Hospital',
+            'patientName': 'Jane Doe',
+            'date': 'invalid-date'
         }
-        
+
         errors = validate_patient_data(patient_data)
         assert 'Invalid date format. Use YYYY-MM-DD' in errors
-    
+
     def test_validate_patient_data_future_date(self):
         """Test patient data validation with future date"""
         patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': '2030-01-15',
-            'gender': 'Male'
+            'caseManagerName': 'John Smith',
+            'phoneNumber': '+1234567890',
+            'facilityName': 'General Hospital',
+            'patientName': 'Jane Doe',
+            'date': '2999-01-15'
         }
-        
+
         errors = validate_patient_data(patient_data)
-        assert 'Date of birth cannot be in the future' in errors
-    
-    def test_validate_patient_data_invalid_gender(self):
-        """Test patient data validation with invalid gender"""
-        patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': '1990-01-15',
-            'gender': 'Invalid'
-        }
-        
-        errors = validate_patient_data(patient_data)
-        assert 'Gender must be one of: Male, Female, Other' in errors
-    
-    def test_validate_patient_data_invalid_email(self):
-        """Test patient data validation with invalid email"""
-        patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': '1990-01-15',
-            'gender': 'Male',
-            'email': 'invalid-email'
-        }
-        
-        errors = validate_patient_data(patient_data)
-        assert 'Invalid email format' in errors
-    
+        assert 'Date cannot be in the future' in errors
+
     def test_validate_patient_data_invalid_phone(self):
-        """Test patient data validation with invalid phone"""
+        """Test patient data validation with invalid phone number"""
         patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': '1990-01-15',
-            'gender': 'Male',
-            'phone': '123'  # Too short
+            'caseManagerName': 'John Smith',
+            'phoneNumber': '123',
+            'facilityName': 'General Hospital',
+            'patientName': 'Jane Doe',
+            'date': '2024-01-15'
         }
-        
+
         errors = validate_patient_data(patient_data)
         assert 'Invalid phone number format' in errors
-    
-    def test_validate_patient_data_invalid_status(self):
-        """Test patient data validation with invalid status"""
+
+    def test_validate_patient_data_invalid_boolean(self):
+        """Test patient data validation with invalid boolean value"""
         patient_data = {
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'date_of_birth': '1990-01-15',
-            'gender': 'Male',
-            'status': 'invalid_status'
+            'caseManagerName': 'John Smith',
+            'phoneNumber': '+1234567890',
+            'facilityName': 'General Hospital',
+            'patientName': 'Jane Doe',
+            'date': '2024-01-15',
+            'referralReceived': 'yes'
         }
-        
+
         errors = validate_patient_data(patient_data)
-        assert 'Status must be one of: active, inactive, discharged' in errors
+        assert 'referralReceived must be a boolean value' in errors
+
+    def test_validate_patient_data_invalid_facility_id(self):
+        """Test patient data validation with invalid facility id"""
+        patient_data = {
+            'caseManagerName': 'John Smith',
+            'phoneNumber': '+1234567890',
+            'facilityName': 'General Hospital',
+            'patientName': 'Jane Doe',
+            'date': '2024-01-15',
+            'facility_id': 'abc'
+        }
+
+        errors = validate_patient_data(patient_data)
+        assert 'Facility ID must be a valid integer' in errors

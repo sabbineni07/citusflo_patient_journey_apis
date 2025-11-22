@@ -91,12 +91,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
-          SourceSecurityGroupId: !GetAtt ApplicationSecurityGroup.GroupId
-        # Allow access from the same security group (self-reference)
-        - IpProtocol: -1
-          FromPort: -1
-          ToPort: -1
-          SourceSecurityGroupId: !Ref DatabaseSecurityGroup
+          CidrIp: 10.0.0.0/16
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-patient-db-sg'

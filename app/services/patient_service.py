@@ -30,6 +30,11 @@ class PatientService:
                 except (ValueError, TypeError):
                     facility_id = None
             
+        # Handle forms - ensure it's a list
+        forms_data = patient_data.get('forms', [])
+        if not isinstance(forms_data, list):
+            forms_data = []
+        
         patient = Patient(
             case_manager_name=patient_data['caseManagerName'],
             phone_number=patient_data['phoneNumber'],
@@ -45,6 +50,7 @@ class PatientService:
             admitted=patient_data.get('admitted', False),
             care_follow_up=patient_data.get('careFollowUp', False),
             form_content=patient_data.get('formContent'),
+            forms=forms_data,  # Store forms as JSON
             created_by=created_by
         )
         
@@ -104,6 +110,12 @@ class PatientService:
                         patient.facility_id = None
                 else:
                     patient.facility_id = None
+            elif key == 'forms':
+                # Handle forms update
+                if isinstance(value, list):
+                    patient.forms = value
+                else:
+                    patient.forms = []
         
         patient.updated_at = datetime.utcnow()
         db.session.commit()

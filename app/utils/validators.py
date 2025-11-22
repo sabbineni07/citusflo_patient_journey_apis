@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+from app.models.role import Role
 
 def validate_user_data(data):
     """Validate user registration data"""
@@ -43,9 +44,23 @@ def validate_user_data(data):
     if data.get('last_name') and len(data['last_name']) < 2:
         errors.append('Last name must be at least 2 characters long')
     
-    # Role validation
-    if data.get('role') and data['role'] not in ['user', 'admin', 'doctor', 'nurse']:
-        errors.append('Role must be one of: user, admin, doctor, nurse')
+    # Role validation - use role_id or role name
+    if data.get('role_id'):
+        # Validate role_id exists
+        try:
+            role_id = int(data['role_id'])
+            role = Role.query.get(role_id)
+            if not role:
+                errors.append(f'Role ID {role_id} does not exist')
+        except (ValueError, TypeError):
+            errors.append('Role ID must be a valid integer')
+    elif data.get('role'):
+        # Validate role name exists in roles table
+        role_name = data['role']
+        role = Role.query.filter_by(name=role_name).first()
+        if not role:
+            valid_roles = [r.name for r in Role.query.all()]
+            errors.append(f'Role must be one of: {", ".join(valid_roles) if valid_roles else "admin, clinician, case_manager"}')
     
     # Facility ID validation
     if data.get('facility_id'):
