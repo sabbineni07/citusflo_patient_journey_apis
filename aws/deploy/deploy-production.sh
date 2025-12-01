@@ -106,15 +106,15 @@ fi
 print_status "Using VPC: $VPC_ID"
 
 # Get all subnets in the VPC with their public/private status
-ALL_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+ALL_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].SubnetId' --output text | tr '\t' ',' | sed 's/[[:space:]]/,/g' | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
 
 # Get public subnets for ALB (subnets with MapPublicIpOnLaunch=true)
-ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[].SubnetId' --output text | tr '\t' ',' | sed 's/[[:space:]]/,/g' | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
 
 # If no public subnets found, use first 2 subnets as fallback
-if [ -z "$ALB_SUBNETS" ]; then
+if [ -z "$ALB_SUBNETS" ] || [ "$ALB_SUBNETS" = "None" ]; then
     print_warning "No public subnets found, using first 2 subnets"
-    ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[:2].SubnetId' --output text | tr '\t' ',')
+    ALB_SUBNETS=$(aws ec2 describe-subnets --region $AWS_REGION --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[:2].SubnetId' --output text | tr '\t' ',' | sed 's/[[:space:]]/,/g' | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
 fi
 
 print_status "All subnets: $ALL_SUBNETS"
@@ -128,16 +128,19 @@ JWT_SECRET=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 64)
 
 print_success "Generated secure credentials"
 
-# ECR setup
+# ECR setup - Need to create repo manually before CloudFormation (template references image URI)
 print_status "🐳 Setting up ECR repository..."
 
-# Create ECR repository if it doesn't exist
-if ! aws ecr describe-repositories --region $AWS_REGION --repository-names $ECR_REPO_NAME &>/dev/null; then
-    print_status "Creating ECR repository: $ECR_REPO_NAME"
-    aws ecr create-repository --region $AWS_REGION --repository-name $ECR_REPO_NAME
-else
-    print_status "ECR repository already exists: $ECR_REPO_NAME"
+# Create ECR repository if it doesn't exist (or delete and recreate to avoid conflicts)
+if aws ecr describe-repositories --region $AWS_REGION --repository-names $ECR_REPO_NAME &>/dev/null; then
+    print_status "ECR repository exists, deleting it to avoid CloudFormation conflict..."
+    aws ecr delete-repository --region $AWS_REGION --repository-name $ECR_REPO_NAME --force 2>/dev/null || true
+    print_status "Waiting 5 seconds for repository deletion to complete..."
+    sleep 5
 fi
+
+print_status "Creating ECR repository: $ECR_REPO_NAME"
+aws ecr create-repository --region $AWS_REGION --repository-name $ECR_REPO_NAME > /dev/null
 
 # Login to ECR
 print_status "Logging in to ECR..."
@@ -154,11 +157,7 @@ docker tag $CONTAINER_NAME:latest $ECR_URI
 print_status "Pushing image to ECR: $ECR_URI"
 docker push $ECR_URI
 
-# Get the image digest
-IMAGE_DIGEST=$(aws ecr describe-images --region $AWS_REGION --repository-name $ECR_REPO_NAME --image-ids imageTag=$IMAGE_TAG --query 'imageDetails[0].imageDigest' --output text)
-FULL_IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME@$IMAGE_DIGEST"
-
-print_success "Image pushed successfully: $FULL_IMAGE_URI"
+print_success "Image pushed successfully: $ECR_URI"
 
 # Deploy CloudFormation stack
 print_status "☁️  Deploying CloudFormation stack..."
@@ -180,58 +179,223 @@ else
     OPERATION="create-stack"
 fi
 
-# Deploy the stack
+# Check if DNS record already exists (Option A: Make DNS creation optional)
+CREATE_DNS_RECORD="true"
+DNS_RECORD_EXISTS="false"
 if [ "$CUSTOM_DOMAIN" = "true" ]; then
-    aws cloudformation $OPERATION \
-        --region $AWS_REGION \
-        --stack-name $STACK_NAME \
-        --template-body file://$TEMPLATE_FILE \
-        --capabilities CAPABILITY_IAM \
-        --parameters \
-            ParameterKey=Environment,ParameterValue=production \
-            ParameterKey=VpcId,ParameterValue=$VPC_ID \
-            ParameterKey=SubnetIds,ParameterValue="$ALL_SUBNETS" \
-            ParameterKey=AlbSubnetIds,ParameterValue="$ALB_SUBNETS" \
-            ParameterKey=DatabasePassword,ParameterValue="$DB_PASSWORD" \
-            ParameterKey=SecretKey,ParameterValue="$SECRET_KEY" \
-            ParameterKey=JWTSecretKey,ParameterValue="$JWT_SECRET" \
-            ParameterKey=DomainName,ParameterValue="$API_SUBDOMAIN" \
-            ParameterKey=CertificateArn,ParameterValue="arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37" \
-            ParameterKey=HostedZoneId,ParameterValue="Z074839530U7S7LIQMR0M" \
-        --tags \
-            Key=Project,Value=CitusFlo \
-            Key=Environment,Value=Production \
-            Key=Service,Value=PatientJourneyAPI
-else
-    aws cloudformation $OPERATION \
-        --region $AWS_REGION \
-        --stack-name $STACK_NAME \
-        --template-body file://$TEMPLATE_FILE \
-        --capabilities CAPABILITY_IAM \
-        --parameters \
-            ParameterKey=Environment,ParameterValue=production \
-            ParameterKey=VpcId,ParameterValue=$VPC_ID \
-            ParameterKey=SubnetIds,ParameterValue="$ALL_SUBNETS" \
-            ParameterKey=AlbSubnetIds,ParameterValue="$ALB_SUBNETS" \
-            ParameterKey=DatabasePassword,ParameterValue="$DB_PASSWORD" \
-            ParameterKey=SecretKey,ParameterValue="$SECRET_KEY" \
-            ParameterKey=JWTSecretKey,ParameterValue="$JWT_SECRET" \
-            ParameterKey=DomainName,ParameterValue="api.citusflo.com" \
-            ParameterKey=CertificateArn,ParameterValue="arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37" \
-            ParameterKey=HostedZoneId,ParameterValue="Z074839530U7S7LIQMR0M" \
-        --tags \
-            Key=Project,Value=CitusFlo \
-            Key=Environment,Value=Production \
-            Key=Service,Value=PatientJourneyAPI
+    print_status "🔍 Checking if DNS record already exists..."
+    HOSTED_ZONE_ID="Z074839530U7S7LIQMR0M"
+    DNS_RECORD=$(aws route53 list-resource-record-sets \
+        --hosted-zone-id $HOSTED_ZONE_ID \
+        --query "ResourceRecordSets[?Name=='${API_SUBDOMAIN}.' || Name=='${API_SUBDOMAIN}'].Name" \
+        --output text 2>/dev/null || echo "")
+    
+    if [ -n "$DNS_RECORD" ]; then
+        print_warning "DNS record for ${API_SUBDOMAIN} already exists - CloudFormation will skip DNS creation"
+        CREATE_DNS_RECORD="false"
+        DNS_RECORD_EXISTS="true"
+    else
+        print_status "DNS record for ${API_SUBDOMAIN} does not exist - CloudFormation will create it"
+    fi
 fi
+
+# Create JSON parameter file to avoid comma-separated value parsing issues
+PARAM_FILE=$(mktemp)
+if [ "$CUSTOM_DOMAIN" = "true" ]; then
+    cat > "$PARAM_FILE" <<EOF
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "production"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "$VPC_ID"
+  },
+  {
+    "ParameterKey": "SubnetIds",
+    "ParameterValue": "$ALL_SUBNETS"
+  },
+  {
+    "ParameterKey": "AlbSubnetIds",
+    "ParameterValue": "$ALB_SUBNETS"
+  },
+  {
+    "ParameterKey": "DatabasePassword",
+    "ParameterValue": "$DB_PASSWORD"
+  },
+  {
+    "ParameterKey": "SecretKey",
+    "ParameterValue": "$SECRET_KEY"
+  },
+  {
+    "ParameterKey": "JWTSecretKey",
+    "ParameterValue": "$JWT_SECRET"
+  },
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "$API_SUBDOMAIN"
+  },
+  {
+    "ParameterKey": "CertificateArn",
+    "ParameterValue": "arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z074839530U7S7LIQMR0M"
+  },
+  {
+    "ParameterKey": "CreateDNSRecord",
+    "ParameterValue": "$CREATE_DNS_RECORD"
+  }
+]
+EOF
+else
+    cat > "$PARAM_FILE" <<EOF
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "production"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "$VPC_ID"
+  },
+  {
+    "ParameterKey": "SubnetIds",
+    "ParameterValue": "$ALL_SUBNETS"
+  },
+  {
+    "ParameterKey": "AlbSubnetIds",
+    "ParameterValue": "$ALB_SUBNETS"
+  },
+  {
+    "ParameterKey": "DatabasePassword",
+    "ParameterValue": "$DB_PASSWORD"
+  },
+  {
+    "ParameterKey": "SecretKey",
+    "ParameterValue": "$SECRET_KEY"
+  },
+  {
+    "ParameterKey": "JWTSecretKey",
+    "ParameterValue": "$JWT_SECRET"
+  },
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "api.citusflo.com"
+  },
+  {
+    "ParameterKey": "CertificateArn",
+    "ParameterValue": "arn:aws:acm:us-east-1:681885653444:certificate/8c346b5b-ee34-4b2f-a368-cd808ca5fd37"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z074839530U7S7LIQMR0M"
+  },
+  {
+    "ParameterKey": "CreateDNSRecord",
+    "ParameterValue": "$CREATE_DNS_RECORD"
+  }
+]
+EOF
+fi
+
+# Deploy the stack using JSON parameter file
+aws cloudformation $OPERATION \
+    --region $AWS_REGION \
+    --stack-name $STACK_NAME \
+    --template-body file://$TEMPLATE_FILE \
+    --capabilities CAPABILITY_IAM \
+    --parameters file://"$PARAM_FILE" \
+    --tags \
+        Key=Project,Value=CitusFlo \
+        Key=Environment,Value=Production \
+        Key=Service,Value=PatientJourneyAPI
+
+# Clean up parameter file
+rm -f "$PARAM_FILE"
 
 print_status "Waiting for stack operation to complete..."
 aws cloudformation wait stack-${OPERATION%-stack}-complete --region $AWS_REGION --stack-name $STACK_NAME
+
+# After stack is created, login to ECR and push image
+if [ "${OPERATION}" = "create-stack" ]; then
+    print_status "Stack created successfully, pushing Docker image to ECR..."
+    aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+    
+    ECR_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$IMAGE_TAG"
+    docker tag $CONTAINER_NAME:latest $ECR_URI
+    docker push $ECR_URI
+    print_success "Image pushed successfully: $ECR_URI"
+    
+    # Update ECS service to use new image
+    print_status "Updating ECS service with new image..."
+    ECS_CLUSTER=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ECSClusterName`].OutputValue' --output text)
+    ECS_SERVICE=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ECSServiceName`].OutputValue' --output text)
+    
+    # Get current task definition and update with new image
+    TASK_DEF_ARN=$(aws ecs describe-services --region $AWS_REGION --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].taskDefinition' --output text)
+    aws ecs update-service --region $AWS_REGION --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment > /dev/null
+    print_success "ECS service is being updated with new image"
+fi
 
 # Get stack outputs
 print_status "📋 Getting deployment information..."
 LB_DNS=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' --output text)
 APP_URL=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`ApplicationURL`].OutputValue' --output text 2>/dev/null || echo "Not available")
+
+# Update DNS record manually if CloudFormation skipped it (Option A)
+if [ "$DNS_RECORD_EXISTS" = "true" ] && [ "$CUSTOM_DOMAIN" = "true" ] && [ -n "$LB_DNS" ]; then
+    print_status "🌐 Updating existing DNS record to point to new load balancer..."
+    HOSTED_ZONE_ID="Z074839530U7S7LIQMR0M"
+    
+    # Get current DNS record value
+    CURRENT_RECORD=$(aws route53 list-resource-record-sets \
+        --hosted-zone-id $HOSTED_ZONE_ID \
+        --query "ResourceRecordSets[?Name=='${API_SUBDOMAIN}.'].{Name:Name,Type:Type,TTL:TTL,Value:ResourceRecords[0].Value}" \
+        --output json 2>/dev/null)
+    
+    if [ -n "$CURRENT_RECORD" ] && [ "$CURRENT_RECORD" != "[]" ]; then
+        # Extract current value
+        CURRENT_VALUE=$(echo "$CURRENT_RECORD" | grep -o '"Value": "[^"]*"' | cut -d'"' -f4)
+        
+        # Update DNS record to point to new load balancer
+        CHANGE_BATCH=$(cat <<EOF
+{
+  "Changes": [{
+    "Action": "UPSERT",
+    "ResourceRecordSet": {
+      "Name": "${API_SUBDOMAIN}.",
+      "Type": "CNAME",
+      "TTL": 300,
+      "ResourceRecords": [{"Value": "${LB_DNS}"}]
+    }
+  }]
+}
+EOF
+)
+        
+        CHANGE_ID=$(aws route53 change-resource-record-sets \
+            --hosted-zone-id $HOSTED_ZONE_ID \
+            --change-batch "$CHANGE_BATCH" \
+            --query 'ChangeInfo.Id' \
+            --output text 2>/dev/null)
+        
+        if [ -n "$CHANGE_ID" ]; then
+            print_success "DNS record updated successfully (Change ID: ${CHANGE_ID})"
+            print_status "Updated ${API_SUBDOMAIN} → ${LB_DNS}"
+            print_status "Previous value was: ${CURRENT_VALUE}"
+        else
+            print_warning "Failed to update DNS record automatically. Please update manually:"
+            print_warning "  Route53 Hosted Zone: ${HOSTED_ZONE_ID}"
+            print_warning "  Record: ${API_SUBDOMAIN}"
+            print_warning "  New Value: ${LB_DNS}"
+        fi
+    else
+        print_warning "Could not find existing DNS record to update"
+    fi
+fi
 
 # Wait for ECS service to be stable
 print_status "⏳ Waiting for ECS service to be stable..."

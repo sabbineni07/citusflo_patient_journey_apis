@@ -7,6 +7,7 @@ from app.services.auth_service import AuthService
 from app.utils.validators import validate_user_data, validate_login_data
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_
 import os
 import re
 
@@ -316,6 +317,84 @@ def get_user_by_id(user_id):
         return jsonify({
             'success': True,
             'data': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/user/<value>', methods=['GET'])
+def get_user_by_username_or_email(value):
+    """Get user by username or email (case-insensitive)
+    
+    The value parameter can be either a username or an email address.
+    The backend will check both fields using OR condition.
+    """
+    try:
+        if not value or not value.strip():
+            return jsonify({'error': 'Username or email is required'}), 400
+        
+        # Normalize the search value (trim and lowercase for case-insensitive search)
+        search_value = value.strip().lower()
+        
+        # Query user by username OR email (case-insensitive)
+        user = User.query.filter(
+            or_(
+                db.func.lower(User.username) == search_value,
+                db.func.lower(User.email) == search_value
+            )
+        ).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'data': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/user/<value>/webauthn', methods=['GET'])
+def check_user_webauthn_setup(value):
+    """Check if user has WebAuthn setup by username or email (case-insensitive)
+    
+    The value parameter can be either a username or an email address.
+    Returns whether the user has WebAuthn credentials configured.
+    """
+    try:
+        if not value or not value.strip():
+            return jsonify({'error': 'Username or email is required'}), 400
+        
+        # Normalize the search value (trim and lowercase for case-insensitive search)
+        search_value = value.strip().lower()
+        
+        # Query user by username OR email (case-insensitive)
+        user = User.query.filter(
+            or_(
+                db.func.lower(User.username) == search_value,
+                db.func.lower(User.email) == search_value
+            )
+        ).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Check if user has WebAuthn credentials
+        has_webauthn = user.has_webauthn
+        
+        # Get credential count if available
+        credential_count = 0
+        if hasattr(user, 'webauthn_credentials'):
+            credential_count = len(user.webauthn_credentials)
+        
+        return jsonify({
+            'success': True,
+            'user_id': str(user.id),
+            'username': user.username,
+            'email': user.email,
+            'has_webauthn': has_webauthn,
+            'credential_count': credential_count
         }), 200
         
     except Exception as e:

@@ -54,10 +54,17 @@ Parameters:
     Type: String
     Default: "Z074839530U7S7LIQMR0M"
     Description: Route53 Hosted Zone ID for citusflo.com
+  
+  CreateDNSRecord:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Whether to create the DNS record (set to false if record already exists)
 
 Conditions:
   UseCustomDomain: !Not [!Equals [!Ref DomainName, '']]
   UseExistingCertificate: !Not [!Equals [!Ref CertificateArn, '']]
+  CreateDNS: !And [!Condition UseCustomDomain, !Equals [!Ref CreateDNSRecord, "true"]]
 
 Resources:
   # Route53 DNS Record for API subdomain
@@ -70,7 +77,7 @@ Resources:
       TTL: 300
       ResourceRecords:
         - !GetAtt ApplicationLoadBalancer.DNSName
-    Condition: UseCustomDomain
+    Condition: CreateDNS
 
   # RDS Database
   DatabaseSubnetGroup:
@@ -121,16 +128,8 @@ Resources:
           Value: !Sub '${Environment}-patient-db'
 
   # ECR Repository
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub '${Environment}-citusflo-patient-journey-api'
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${Environment}-citusflo-patient-journey-api'
-
+  # ECR Repository is created manually by deployment script to avoid conflicts
+  
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -209,7 +208,7 @@ Resources:
         OperatingSystemFamily: LINUX
       ContainerDefinitions:
         - Name: patient-api
-          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest'
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Environment}-citusflo-patient-journey-api:latest'
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
@@ -222,6 +221,8 @@ Resources:
               Value: !Ref SecretKey
             - Name: JWT_SECRET_KEY
               Value: !Ref JWTSecretKey
+            - Name: CORS_ORIGINS
+              Value: !Sub 'https://${DomainName},https://www.${DomainName}'
           LogConfiguration:
             LogDriver: awslogs
             Options:

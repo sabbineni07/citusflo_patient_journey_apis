@@ -139,8 +139,8 @@ def filter_facilities_by_access(query, current_user):
         # case_manager can only see their facility
         if current_user.facility_id:
             query = query.filter(Facility.id == current_user.facility_id)
-        else:
-            query = query.filter(Facility.id == None)
+        # else:
+        #     query = query.filter(Facility.id == None)
     
     elif role_name in ['admin', 'clinician']:
         # admin and clinician can see facilities from hospitals that work with their home_health
@@ -154,15 +154,14 @@ def filter_facilities_by_access(query, current_user):
                 hospital_ids = [h.id for h in home_health.hospitals]
                 if hospital_ids:
                     query = query.filter(Facility.hospital_id.in_(hospital_ids))
-                else:
-                    query = query.filter(Facility.id == None)
-            else:
-                query = query.filter(Facility.id == None)
-        else:
-            query = query.filter(Facility.id == None)
-    
-    else:
-        query = query.filter(Facility.id == None)
+                # else:
+                #     query = query.filter(Facility.id == None)
+            # else:
+            #     query = query.filter(Facility.id == None)
+        # else:
+        #     query = query.filter(Facility.id == None)
+    # else:
+    #     query = query.filter(Facility.id == None)
     
     return query
 
