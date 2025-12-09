@@ -127,10 +127,18 @@ def validate_patient_data(data, is_update=False):
     
     # Boolean field validation
     boolean_fields = ['referralReceived', 'insuranceVerification', 'familyAndPatientAware', 
-                     'inPersonVisit', 'dischargedFromFacility', 'admitted', 'careFollowUp']
+                     'inPersonVisit', 'dischargedFromFacility', 'admitted', 'careFollowUp', 'active']
     for field in boolean_fields:
         if data.get(field) is not None and not isinstance(data[field], bool):
             errors.append(f'{field} must be a boolean value')
+    
+    # DateTime validation for admittedDatetime
+    if data.get('admittedDatetime'):
+        try:
+            # Try to parse ISO format datetime
+            datetime.fromisoformat(data['admittedDatetime'].replace('Z', '+00:00'))
+        except (ValueError, AttributeError, TypeError):
+            errors.append('admittedDatetime must be a valid ISO format datetime string (e.g., YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SSZ)')
     
     # Facility ID validation
     if data.get('facility_id'):

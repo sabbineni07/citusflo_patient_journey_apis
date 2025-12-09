@@ -10,6 +10,23 @@ import uuid
 class PatientService:
     """Service class for patient operations"""
     
+    def _parse_datetime(self, datetime_str):
+        """Parse datetime string to datetime object, handling various formats"""
+        if not datetime_str:
+            return None
+        try:
+            # Handle ISO format with timezone (Z or +00:00)
+            if isinstance(datetime_str, str):
+                # Replace Z with +00:00 for timezone handling
+                datetime_str = datetime_str.replace('Z', '+00:00')
+                return datetime.fromisoformat(datetime_str)
+            elif isinstance(datetime_str, datetime):
+                return datetime_str
+            else:
+                return None
+        except (ValueError, AttributeError, TypeError):
+            return None
+    
     def _determine_hospital_id(self, user, patient_data):
         """Determine hospital_id based on user context and patient data
         
@@ -125,6 +142,9 @@ class PatientService:
             discharged_from_facility=patient_data.get('dischargedFromFacility', False),
             admitted=patient_data.get('admitted', False),
             care_follow_up=patient_data.get('careFollowUp', False),
+            active=patient_data.get('active', True),
+            admitted_datetime=self._parse_datetime(patient_data.get('admittedDatetime')),
+            notes=patient_data.get('notes'),
             form_content=patient_data.get('formContent'),
             forms=forms_data,  # Store forms as JSON
             created_by=user_id
@@ -212,6 +232,16 @@ class PatientService:
                     patient.forms = value
                 else:
                     patient.forms = []
+            elif key == 'active':
+                # Handle active field
+                if value is not None:
+                    patient.active = bool(value)
+            elif key == 'admittedDatetime':
+                # Handle admitted_datetime field
+                patient.admitted_datetime = self._parse_datetime(value)
+            elif key == 'notes':
+                # Handle notes field
+                patient.notes = value if value else None
         
         patient.updated_at = datetime.utcnow()
         db.session.commit()

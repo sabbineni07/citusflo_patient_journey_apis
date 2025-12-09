@@ -20,6 +20,9 @@ class Patient(db.Model):
     discharged_from_facility = db.Column(db.Boolean, default=False)
     admitted = db.Column(db.Boolean, default=False)
     care_follow_up = db.Column(db.Boolean, default=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    admitted_datetime = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
     form_content = db.Column(db.Text)
     forms = db.Column(db.JSON, default=list)  # JSON field to store array of forms
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
@@ -62,6 +65,9 @@ class Patient(db.Model):
             'dischargedFromFacility': self.discharged_from_facility,
             'admitted': self.admitted,
             'careFollowUp': self.care_follow_up,
+            'active': self.active,
+            'admittedDatetime': self.admitted_datetime.isoformat() if self.admitted_datetime else None,
+            'notes': self.notes,
             'formContent': self.form_content,
             'forms': forms_data,  # Include forms array
             'created_by': self.created_by,
