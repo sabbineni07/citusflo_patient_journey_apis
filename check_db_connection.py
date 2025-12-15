@@ -4,16 +4,25 @@ Script to test database connection and query users table
 """
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import os
 import sys
+import getpass
 
 # Database connection details
 DB_CONFIG = {
-    'host': 'production-citusflo-patient-db.c8v468m8gv2i.us-east-1.rds.amazonaws.com',
+    'host': 'production-patient-db.c8v468m8gv2i.us-east-1.rds.amazonaws.com',
     'port': 5432,
     'database': 'patient_journey',
     'user': 'postgres',
-    'password': 'Citusflo123'
+    'password': os.getenv('DB_PASSWORD', ''),
+    # AWS RDS requires SSL for external connections
+    'sslmode': 'require',
+    'connect_timeout': 10
 }
+
+# If password not in environment variable, prompt for it
+if not DB_CONFIG['password']:
+    DB_CONFIG['password'] = getpass.getpass('Enter database password: ')
 
 def test_connection():
     """Test database connection and query users table"""
@@ -91,11 +100,34 @@ def test_connection():
         return True
         
     except psycopg2.OperationalError as e:
+        error_msg = str(e)
         print(f"❌ Connection failed: {e}")
         print("\nPossible issues:")
-        print("  - Database might not be accessible from this machine (security group restrictions)")
-        print("  - Network connectivity issues")
-        print("  - Incorrect credentials")
+        
+        if "password authentication failed" in error_msg.lower():
+            print("  - ❌ Incorrect password")
+            print("  - 💡 The password is randomly generated during deployment")
+            print("  - 💡 See instructions below to reset or retrieve the password")
+        elif "no pg_hba.conf entry" in error_msg.lower() or "no encryption" in error_msg.lower():
+            print("  - ❌ SSL connection required")
+            print("  - 💡 This script now uses SSL mode 'require'")
+        elif "timeout" in error_msg.lower():
+            print("  - ❌ Connection timeout")
+            print("  - 💡 Check security group rules allow your IP (96.255.65.79)")
+            print("  - 💡 Verify network connectivity")
+        else:
+            print("  - Database might not be accessible from this machine (security group restrictions)")
+            print("  - Network connectivity issues")
+            print("  - Incorrect credentials")
+        
+        print("\n📋 Troubleshooting:")
+        print("  1. Verify password:")
+        print("     - Option A: Reset password via AWS Console (RDS → Modify → Change Master Password)")
+        print("     - Option B: Check deployment logs for generated password")
+        print("  2. Verify security group allows your IP: 96.255.65.79/32")
+        print("  3. Set password as environment variable:")
+        print("     export DB_PASSWORD='your-password-here'")
+        print("     python3 check_db_connection.py")
         return False
     except psycopg2.Error as e:
         print(f"❌ Database error: {e}")
@@ -107,6 +139,7 @@ def test_connection():
 if __name__ == "__main__":
     success = test_connection()
     sys.exit(0 if success else 1)
+
 
 
 

@@ -111,6 +111,7 @@ def create_app():
         # Seed roles first (inline to avoid circular dependencies)
         from app.models.role import Role
         predefined_roles = [
+            {'name': 'super_admin', 'description': 'Super Administrator with full system access and management'},
             {'name': 'admin', 'description': 'Administrator with full system access'},
             {'name': 'clinician', 'description': 'Clinical staff member'},
             {'name': 'case_manager', 'description': 'Case manager responsible for patient coordination'}
@@ -119,22 +120,110 @@ def create_app():
             Role.get_or_create(role_data['name'], role_data['description'])
         print("✅ Roles seeded successfully")
         
-        # Create admin user if it doesn't exist
-        admin_user = User.query.filter_by(username='admin').first()
-        if not admin_user:
-            admin_user = User(
-                username='admin',
-                email='admin@hospital.com',
-                first_name='Admin',
-                last_name='User',
-                role='admin'
-            )
-            admin_user.set_password('admin123')
-            db.session.add(admin_user)
-            db.session.commit()
-            print("Admin user created: username=admin, password=admin123")
+        # # Create default super admin user if it doesn't exist
+        # admin_user = User.query.filter_by(username='citusflo_admin').first()
+        # if not admin_user:
+        #     # Get super_admin role_id
+        #     super_admin_role = Role.query.filter_by(name='super_admin').first()
+        #     if not super_admin_role:
+        #         # If super_admin role doesn't exist, create it
+        #         super_admin_role = Role.get_or_create('super_admin', 'Super Administrator with full system access and management')
+        #
+        #     admin_user = User(
+        #         username='*******',
+        #         email='account@citusflo.com',
+        #         first_name='CitusFlo',
+        #         last_name='Admin',
+        #         role='super_admin',  # Kept for backward compatibility
+        #         role_id=super_admin_role.id  # Set role_id for proper role relationship
+        #     )
+        #     admin_user.set_password('KPS@c1tusfl0')
+        #     db.session.add(admin_user)
+        #     db.session.commit()
+        #     print("Super admin user created: username=*****, password=*******")
+        #     print(f"Super admin user role_id: {super_admin_role.id}")
         
         print("Database initialized successfully!")
+    
+    @app.cli.command()
+    def cleanup_database():
+        """Clean up all database tables, keeping only the default citusflo_admin user and roles"""
+        from app.models.patient import Patient
+        from app.models.user import User
+        from app.models.facility import Facility
+        from app.models.home_health import HomeHealth
+        from app.models.hospital import Hospital
+        from app.models.webauthn_credential import WebAuthnCredential
+        from sqlalchemy import text
+        
+        print("🧹 Starting database cleanup...")
+        print("   This will delete all data except the default 'citusflo_admin' user and roles")
+        
+        try:
+            # Get the default user to preserve
+            default_user = User.query.filter_by(username='citusflo_admin').first()
+            default_user_id = default_user.id if default_user else None
+            
+            if not default_user:
+                print("⚠️  Warning: Default user 'citusflo_admin' not found. Proceeding with cleanup anyway.")
+            
+            # 1. Delete all patients (has foreign keys to users, facilities, home_health)
+            patient_count = Patient.query.count()
+            Patient.query.delete()
+            print(f"   ✅ Deleted {patient_count} patient records")
+            
+            # 2. Delete all WebAuthn credentials (has foreign key to users)
+            webauthn_count = WebAuthnCredential.query.count()
+            WebAuthnCredential.query.delete()
+            print(f"   ✅ Deleted {webauthn_count} WebAuthn credential records")
+            
+            # 3. Reset all users' facility_id and home_health_id to avoid foreign key violations
+            db.session.execute(text("UPDATE users SET facility_id = NULL, home_health_id = NULL"))
+            print(f"   ✅ Reset all users' facility_id and home_health_id")
+            
+            # 4. Delete all facilities (has foreign key to hospitals)
+            facility_count = Facility.query.count()
+            Facility.query.delete()
+            print(f"   ✅ Deleted {facility_count} facility records")
+            
+            # 5. Delete all junction table entries (home_health_hospitals)
+            db.session.execute(text("DELETE FROM home_health_hospitals"))
+            print(f"   ✅ Deleted home_health_hospitals junction table entries")
+            
+            # 6. Delete all hospitals
+            hospital_count = Hospital.query.count()
+            Hospital.query.delete()
+            print(f"   ✅ Deleted {hospital_count} hospital records")
+            
+            # 7. Delete all home health agencies
+            home_health_count = HomeHealth.query.count()
+            HomeHealth.query.delete()
+            print(f"   ✅ Deleted {home_health_count} home health agency records")
+            
+            # 8. Delete all users except the default user
+            if default_user_id:
+                user_count = User.query.filter(User.id != default_user_id).count()
+                User.query.filter(User.id != default_user_id).delete()
+                print(f"   ✅ Deleted {user_count} user records (kept citusflo_admin)")
+            else:
+                user_count = User.query.count()
+                User.query.delete()
+                print(f"   ⚠️  Deleted {user_count} user records (default user not found)")
+            
+            # Commit all changes
+            db.session.commit()
+            
+            print("✅ Database cleanup completed successfully!")
+            print(f"   Default user 'citusflo_admin' preserved: {'Yes' if default_user else 'No'}")
+            print("   Roles table preserved (required for system operation)")
+            
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Error during database cleanup: {e}")
+            import traceback
+            traceback.print_exc()
+            import sys
+            sys.exit(1)
     
     @app.cli.command()
     def seed_roles():
@@ -152,16 +241,21 @@ def create_app():
         predefined_roles = [
             {
                 'id': 1,
+                'name': 'super_admin',
+                'description': 'Super Administrator with full system access and management'
+            },
+            {
+                'id': 2,
                 'name': 'admin',
                 'description': 'Administrator with full system access'
             },
             {
-                'id': 2,
+                'id': 3,
                 'name': 'clinician',
                 'description': 'Clinical staff member'
             },
             {
-                'id': 3,
+                'id': 4,
                 'name': 'case_manager',
                 'description': 'Case manager responsible for patient coordination'
             }

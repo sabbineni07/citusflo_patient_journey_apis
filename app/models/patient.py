@@ -13,6 +13,7 @@ class Patient(db.Model):
     home_health_id = db.Column(db.Integer, db.ForeignKey('home_health.id'), nullable=True)
     patient_name = db.Column(db.String(100), nullable=False)
     date = db.Column(db.Date, nullable=False)
+    date_of_birth = db.Column(db.Date, nullable=True)
     referral_received = db.Column(db.Boolean, default=False)
     insurance_verification = db.Column(db.Boolean, default=False)
     family_and_patient_aware = db.Column(db.Boolean, default=False)
@@ -35,17 +36,89 @@ class Patient(db.Model):
     # Relationship with home health agency
     home_health = db.relationship('HomeHealth', lazy=True)
     
+    def get_latest_forms(self):
+        """Get the most recent form per form_id for this patient (no duplicates)
+        
+        Returns all unique form_ids ordered by created_at DESC, with only the most recent
+        entry for each form_id. This allows tracking form history while returning only
+        the latest version of each form.
+        """
+        from sqlalchemy import func
+        from app.models.patient_form import PatientForm
+        
+        # Subquery to get the max created_at per form_id for this patient
+        subquery = db.session.query(
+            PatientForm.form_id,
+            func.max(PatientForm.created_at).label('max_created_at')
+        ).filter(
+            PatientForm.patient_id == self.id
+        ).group_by(
+            PatientForm.form_id
+        ).subquery()
+        
+        # Query to get the actual form records matching the latest timestamps
+        # Order by created_at DESC to return newest forms first
+        latest_forms = db.session.query(PatientForm).join(
+            subquery,
+            (PatientForm.form_id == subquery.c.form_id) &
+            (PatientForm.created_at == subquery.c.max_created_at) &
+            (PatientForm.patient_id == self.id)
+        ).order_by(PatientForm.created_at.desc()).all()
+        
+        return latest_forms
+    
     def to_dict(self):
         """Convert patient to dictionary"""
-        # Handle forms - ensure it's always a list
-        forms_data = self.forms if self.forms is not None else []
-        if isinstance(forms_data, str):
+        # Get latest forms per form_type from patient_forms table (no duplicates)
+        latest_forms = self.get_latest_forms()
+        
+        # Convert to list of dictionaries, preserving form_type
+        forms_data = []
+        for form in latest_forms:
+            # Get creator full name if available
+            created_by_name = None
+            if form.creator:
+                # Get full name (first_name + last_name)
+                if form.creator.first_name and form.creator.last_name:
+                    created_by_name = f"{form.creator.first_name} {form.creator.last_name}".strip()
+                elif form.creator.first_name:
+                    created_by_name = form.creator.first_name
+                elif form.creator.last_name:
+                    created_by_name = form.creator.last_name
+                else:
+                    created_by_name = form.creator.username  # Fallback to username if no name
+            elif form.created_by:
+                # Fallback: try to get user if relationship not loaded
+                from app.models.user import User
+                creator = User.query.get(form.created_by)
+                if creator:
+                    if creator.first_name and creator.last_name:
+                        created_by_name = f"{creator.first_name} {creator.last_name}".strip()
+                    elif creator.first_name:
+                        created_by_name = creator.first_name
+                    elif creator.last_name:
+                        created_by_name = creator.last_name
+                    else:
+                        created_by_name = creator.username  # Fallback to username if no name
+            
+            forms_data.append({
+                'id': form.id,
+                'formId': form.form_id,
+                'formType': form.form_type,
+                'formData': form.form_data,
+                'createdBy': created_by_name,  # Return username instead of ID
+                'createdAt': form.created_at.isoformat() if form.created_at else None
+            })
+        
+        # Also keep legacy forms field for backward compatibility (if exists)
+        legacy_forms_data = self.forms if self.forms is not None else []
+        if isinstance(legacy_forms_data, str):
             try:
-                forms_data = json.loads(forms_data)
+                legacy_forms_data = json.loads(legacy_forms_data)
             except (json.JSONDecodeError, TypeError):
-                forms_data = []
-        if not isinstance(forms_data, list):
-            forms_data = []
+                legacy_forms_data = []
+        if not isinstance(legacy_forms_data, list):
+            legacy_forms_data = []
         
         return {
             'id': str(self.id),
@@ -58,6 +131,7 @@ class Patient(db.Model):
             'home_health_name': self.home_health.name if self.home_health else None,
             'patientName': self.patient_name,
             'date': self.date.isoformat() if self.date else None,
+            'dateOfBirth': self.date_of_birth.isoformat() if self.date_of_birth else None,
             'referralReceived': self.referral_received,
             'insuranceVerification': self.insurance_verification,
             'familyAndPatientAware': self.family_and_patient_aware,

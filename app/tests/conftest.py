@@ -56,17 +56,26 @@ def auth_headers(client):
 @pytest.fixture
 def admin_headers(client):
     """Get admin authentication headers for testing."""
-    # Create admin user
-    admin_user = User(
-        username='admin',
-        email='admin@example.com',
-        first_name='Admin',
-        last_name='User',
-        role='admin'
-    )
-    admin_user.set_password('admin123')
+    from app.models.role import Role
     
+    # Create admin user with super_admin role for testing
     with client.application.app_context():
+        # Get or create super_admin role
+        super_admin_role = Role.query.filter_by(name='super_admin').first()
+        if not super_admin_role:
+            super_admin_role = Role(name='super_admin', description='Super Administrator')
+            db.session.add(super_admin_role)
+            db.session.commit()
+        
+        admin_user = User(
+            username='admin',
+            email='admin@example.com',
+            first_name='Admin',
+            last_name='User',
+            role='super_admin',  # Backward compatibility string field
+            role_id=super_admin_role.id  # Proper role relationship
+        )
+        admin_user.set_password('admin123')
         db.session.add(admin_user)
         db.session.commit()
     

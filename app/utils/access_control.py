@@ -59,6 +59,7 @@ def require_permission(permission):
     """
     role_permissions = {
         'case_manager': ['read'],
+        'super_admin': ['read', 'write', 'delete'],
         'admin': ['read', 'write', 'delete'],
         'clinician': ['read', 'write']
     }
@@ -107,12 +108,16 @@ def filter_patients_by_access(query, current_user):
             # If no facility_id, return empty query
             query = query.filter(Patient.id == None)  # This will return no results
     
-    elif role_name in ['admin', 'clinician']:
-        # admin and clinician can see all patients from their home_health
-        if current_user.home_health_id:
+    elif role_name in ['super_admin', 'admin', 'clinician']:
+        # super_admin, admin and clinician can see all patients from their home_health
+        # super_admin without home_health_id can see all patients
+        if role_name == 'super_admin' and not current_user.home_health_id:
+            # super_admin without home_health_id can see all patients
+            pass  # No filtering - show all
+        elif current_user.home_health_id:
             query = query.filter(Patient.home_health_id == current_user.home_health_id)
         else:
-            # If no home_health_id, return empty query
+            # If no home_health_id (and not super_admin), return empty query
             query = query.filter(Patient.id == None)
     
     else:
@@ -142,9 +147,13 @@ def filter_facilities_by_access(query, current_user):
         # else:
         #     query = query.filter(Facility.id == None)
     
-    elif role_name in ['admin', 'clinician']:
-        # admin and clinician can see facilities from hospitals that work with their home_health
-        if current_user.home_health_id:
+    elif role_name in ['super_admin', 'admin', 'clinician']:
+        # super_admin, admin and clinician can see facilities from hospitals that work with their home_health
+        # super_admin without home_health_id can see all facilities
+        if role_name == 'super_admin' and not current_user.home_health_id:
+            # super_admin without home_health_id can see all facilities
+            pass  # No filtering - show all
+        elif current_user.home_health_id:
             # Get hospital IDs that work with this home_health
             from app.models.hospital import Hospital
             from app.models.home_health import HomeHealth
@@ -183,8 +192,11 @@ def can_access_patient(current_user, patient):
         # case_manager can only access patients from their facility
         return (patient.facility_id == current_user.facility_id)
     
-    elif role_name in ['admin', 'clinician']:
-        # admin and clinician can access patients from their home_health
+    elif role_name in ['super_admin', 'admin', 'clinician']:
+        # super_admin, admin and clinician can access patients from their home_health
+        # super_admin without home_health_id can access all patients
+        if role_name == 'super_admin' and not current_user.home_health_id:
+            return True  # super_admin can access all patients
         return (patient.home_health_id == current_user.home_health_id)
     
     return False
@@ -206,6 +218,12 @@ def can_modify_patient(current_user, patient):
     # case_manager cannot modify anything (read-only)
     if role_name == 'case_manager':
         return False
+    
+    # super_admin can modify all patients (if no home_health_id) or patients from their home_health
+    if role_name == 'super_admin':
+        if not current_user.home_health_id:
+            return True  # super_admin can modify all patients
+        return (patient.home_health_id == current_user.home_health_id)
     
     # admin can modify patients from their home_health
     if role_name == 'admin':
@@ -230,8 +248,8 @@ def can_create_patient(current_user):
     """
     role_name = current_user.role_name
     
-    # Admin and clinician can create patients
-    if role_name in ['admin', 'clinician']:
+    # super_admin, admin and clinician can create patients
+    if role_name in ['super_admin', 'admin', 'clinician']:
         return True
     
     # case_manager cannot create patients (read-only)
@@ -251,7 +269,12 @@ def can_delete_patient(current_user, patient):
     """
     role_name = current_user.role_name
     
-    # Only admin can delete patients
+    # super_admin and admin can delete patients
+    if role_name == 'super_admin':
+        if not current_user.home_health_id:
+            return True  # super_admin can delete all patients
+        return (patient.home_health_id == current_user.home_health_id)
+    
     if role_name == 'admin':
         return (patient.home_health_id == current_user.home_health_id)
     

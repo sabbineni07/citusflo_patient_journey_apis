@@ -224,7 +224,7 @@ fix_database_init() {
             
             if [ "$INIT_EXIT_CODE" = "0" ]; then
                 print_success "✅ Database initialized successfully!"
-                print_success "Admin user created: username=admin, password=admin123"
+                print_success "Super admin user created: username=user_name, password=password"
                 return 0
             else
                 print_error "❌ Database initialization failed with exit code: $INIT_EXIT_CODE"

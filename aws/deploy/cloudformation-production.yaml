@@ -222,7 +222,7 @@ Resources:
             - Name: JWT_SECRET_KEY
               Value: !Ref JWTSecretKey
             - Name: CORS_ORIGINS
-              Value: !Sub 'https://${DomainName},https://www.${DomainName}'
+              Value: !Sub 'https://app.citusflo.com,https://www.app.citusflo.com,https://${DomainName},https://www.${DomainName}'
           LogConfiguration:
             LogDriver: awslogs
             Options:

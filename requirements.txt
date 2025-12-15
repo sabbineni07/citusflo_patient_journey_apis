@@ -16,3 +16,5 @@ gunicorn==21.2.0
 # WebAuthn dependencies
 cbor2>=5.4.0
 cryptography>=41.0.0
+# QR Code generation
+qrcode[pil]==7.4.2

@@ -1,10 +1,11 @@
 from app import db
 from app.models.patient import Patient
+from app.models.patient_form import PatientForm
 from app.models.facility import Facility
 from app.models.user import User
 from app.models.hospital import Hospital
 from datetime import datetime
-from sqlalchemy import or_
+from sqlalchemy import or_, func, desc
 import uuid
 
 class PatientService:
@@ -22,6 +23,25 @@ class PatientService:
                 return datetime.fromisoformat(datetime_str)
             elif isinstance(datetime_str, datetime):
                 return datetime_str
+            else:
+                return None
+        except (ValueError, AttributeError, TypeError):
+            return None
+    
+    def _parse_date(self, date_str):
+        """Parse date string to date object, handling various formats"""
+        if not date_str:
+            return None
+        try:
+            if isinstance(date_str, str):
+                # Try ISO format (YYYY-MM-DD)
+                if 'T' in date_str:
+                    date_str = date_str.split('T')[0]
+                if ' ' in date_str:
+                    date_str = date_str.split(' ')[0]
+                return datetime.strptime(date_str, '%Y-%m-%d').date()
+            elif isinstance(date_str, datetime):
+                return date_str.date()
             else:
                 return None
         except (ValueError, AttributeError, TypeError):
@@ -114,7 +134,7 @@ class PatientService:
                 except (ValueError, TypeError):
                     facility_id = None
             
-        # Handle forms - ensure it's a list
+        # Handle forms - will be saved to patient_forms table
         forms_data = patient_data.get('forms', [])
         if not isinstance(forms_data, list):
             forms_data = []
@@ -135,6 +155,7 @@ class PatientService:
             home_health_id=home_health_id,
             patient_name=patient_data['patientName'],
             date=datetime.strptime(patient_data['date'], '%Y-%m-%d').date(),
+            date_of_birth=self._parse_date(patient_data.get('dateOfBirth')),
             referral_received=patient_data.get('referralReceived', False),
             insurance_verification=patient_data.get('insuranceVerification', False),
             family_and_patient_aware=patient_data.get('familyAndPatientAware', False),
@@ -150,14 +171,113 @@ class PatientService:
             created_by=user_id
         )
         
-        # Save to database
+        # Save patient to database
         db.session.add(patient)
+        db.session.flush()  # Flush to get patient.id
+        
+        # Save forms to patient_forms table
+        self._save_forms_to_table(patient.id, forms_data, user_id)
+        
         db.session.commit()
         
         return patient
     
-    def update_patient(self, patient, patient_data):
-        """Update an existing patient"""
+    def _save_forms_to_table(self, patient_id, forms_data, created_by=None):
+        """Save forms to patient_forms table (append, not replace)
+        
+        Args:
+            patient_id: Patient ID
+            forms_data: List of form objects. Each can be:
+                - {"formId": 1, "formType": "intake", "formData": {...}}
+                - {"id": 1, "formType": "intake", "formData": {...}}
+                - {"formType": "intake", "formData": {...}} (formId will be generated)
+            created_by: User ID who created the forms
+            
+        Behavior:
+        - Always creates new entries for all forms sent (versioning/history)
+        - If formId is provided, uses it (for updates to existing forms)
+        - If formId is not provided, generates a new unique form_id
+        - If multiple forms have the same form_type in the request, only the last one is saved
+        - When returning forms via patient model, get_latest_forms() returns most recent per form_id
+        """
+        from app.models.patient_form import PatientForm
+        from sqlalchemy import func
+        
+        # Track forms by type to ensure we only save one form per type in this request
+        # This prevents duplicates when frontend sends multiple forms with same form_type
+        forms_by_type = {}
+        
+        for form_item in forms_data:
+            if not isinstance(form_item, dict):
+                continue
+            
+            # Extract form_id - can be formId, id, or form_id
+            form_id = form_item.get('formId') or form_item.get('form_id') or form_item.get('id')
+            
+            # Extract form_type - required field (try multiple field names)
+            form_type = form_item.get('formType') or form_item.get('form_type') or form_item.get('type') or 'unknown'
+            
+            # Extract form_data - can be nested or the whole item
+            # Priority: formData > form_data > data > entire form_item (excluding metadata)
+            if 'formData' in form_item:
+                form_data = form_item['formData']
+            elif 'form_data' in form_item:
+                form_data = form_item['form_data']
+            elif 'data' in form_item:
+                form_data = form_item['data']
+            else:
+                # Use entire form_item but remove metadata fields
+                form_data = {k: v for k, v in form_item.items() 
+                           if k not in ['formType', 'form_type', 'type', 'id', 'formId', 'form_id', 'createdAt', 'created_at', 'createdBy', 'created_by']}
+            
+            # Ensure form_data is a dict (if it's None or empty, use empty dict)
+            if not isinstance(form_data, dict):
+                form_data = {'value': form_data} if form_data is not None else {}
+            
+            # Store form by type (overwrite if same type appears multiple times - keep latest)
+            forms_by_type[str(form_type)] = {
+                'form_id': int(form_id) if form_id is not None else None,
+                'form_type': str(form_type),
+                'form_data': form_data
+            }
+        
+        # Always create new entries for all forms (versioning/history)
+        for form_type, form_info in forms_by_type.items():
+            form_id = form_info['form_id']
+            
+            # If form_id not provided, generate a new unique one
+            if form_id is None:
+                # Get the max form_id for this patient and increment
+                max_form_id = db.session.query(func.max(PatientForm.form_id)).filter_by(
+                    patient_id=patient_id
+                ).scalar()
+                form_id = (max_form_id or 0) + 1
+            
+            patient_form = PatientForm(
+                form_id=form_id,
+                patient_id=patient_id,
+                form_type=form_info['form_type'],
+                form_data=form_info['form_data'],
+                created_by=created_by
+            )
+            db.session.add(patient_form)
+    
+    def _get_latest_forms_per_type(self, patient_id):
+        """Get the most recent form per form_type for a patient (no duplicates)"""
+        from app.models.patient import Patient
+        patient = Patient.query.get(patient_id)
+        if patient:
+            return patient.get_latest_forms()
+        return []
+    
+    def update_patient(self, patient, patient_data, current_user_id=None):
+        """Update an existing patient
+        
+        Args:
+            patient: Patient object to update
+            patient_data: Dictionary containing patient data to update
+            current_user_id: User ID of the current user making the update (for form tracking)
+        """
         # Get user object if available for hospital context
         user = None
         if patient.created_by:
@@ -201,13 +321,25 @@ class PatientService:
         
         # Update other fields
         for key, value in patient_data.items():
-            if key in field_mapping:
+            if key == 'date':
+                # Handle date field (requires parsing)
+                if value:
+                    try:
+                        # Handle ISO format dates (may include time)
+                        if isinstance(value, str):
+                            # Extract just the date part if datetime string provided
+                            date_str = value.split('T')[0] if 'T' in value else value.split(' ')[0]
+                            patient.date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    except (ValueError, TypeError) as e:
+                        # If parsing fails, skip the update
+                        pass
+            elif key == 'dateOfBirth':
+                # Handle date_of_birth field (requires parsing)
+                patient.date_of_birth = self._parse_date(value)
+            elif key in field_mapping:
                 db_field = field_mapping[key]
                 if hasattr(patient, db_field) and db_field not in ['id', 'created_at', 'created_by', 'facility_name', 'facility_id']:
-                    if key == 'date' and value:
-                        patient.date = datetime.strptime(value, '%Y-%m-%d').date()
-                    else:
-                        setattr(patient, db_field, value)
+                    setattr(patient, db_field, value)
             elif key == 'facility_id' and 'facilityName' not in patient_data:
                 # Handle direct facility_id update only if facilityName is not provided
                 if value and str(value).strip():
@@ -227,15 +359,22 @@ class PatientService:
                 else:
                     patient.home_health_id = None
             elif key == 'forms':
-                # Handle forms update
-                if isinstance(value, list):
-                    patient.forms = value
-                else:
-                    patient.forms = []
+                # Handle forms update - append to patient_forms table (never replace)
+                if isinstance(value, list) and len(value) > 0:
+                    # Use the current_user_id passed to the method (from the route)
+                    # This ensures we capture the session user who is making the update
+                    user_id_for_forms = current_user_id if current_user_id else None
+                    
+                    # Append new forms (versioning/history)
+                    self._save_forms_to_table(patient.id, value, created_by=user_id_for_forms)
             elif key == 'active':
                 # Handle active field
                 if value is not None:
                     patient.active = bool(value)
+            elif key == 'admitted':
+                # Handle admitted field (boolean, no camelCase conversion needed)
+                if value is not None:
+                    patient.admitted = bool(value)
             elif key == 'admittedDatetime':
                 # Handle admitted_datetime field
                 patient.admitted_datetime = self._parse_datetime(value)

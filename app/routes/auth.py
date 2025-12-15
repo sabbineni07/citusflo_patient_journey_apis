@@ -23,7 +23,10 @@ def register():
         # Validate input data
         validation_errors = validate_user_data(data)
         if validation_errors:
-            return jsonify({'errors': validation_errors}), 400
+            # Return first error message for consistency with other error responses
+            # Frontend expects 'error' (singular) not 'errors' (plural)
+            error_message = validation_errors[0] if len(validation_errors) == 1 else f"Validation failed: {'; '.join(validation_errors)}"
+            return jsonify({'error': error_message, 'errors': validation_errors}), 400
         
         # Check if user already exists (case-insensitive check for better UX)
         existing_username = User.query.filter(db.func.lower(User.username) == db.func.lower(data['username'])).first()
@@ -55,14 +58,15 @@ def register():
                 current_user_id = decoded.get('sub')
                 if current_user_id:
                     current_user = User.query.get(int(current_user_id))
-                    is_admin_creating = current_user and current_user.role_name == 'admin'
+                    is_admin_creating = current_user and current_user.role_name in ['admin', 'super_admin']
             except:
                 # If token is invalid, treat as public registration
                 pass
         
-        # For public registration, ensure role is not admin (security measure)
-        if not is_admin_creating and (data.get('role') == 'admin' or data.get('role_name') == 'admin'):
-            return jsonify({'error': 'Cannot create admin user without admin privileges'}), 403
+        # For public registration, ensure role is not admin or super_admin (security measure)
+        requested_role = data.get('role') or data.get('role_name')
+        if not is_admin_creating and requested_role in ['admin', 'super_admin']:
+            return jsonify({'error': 'Cannot create admin or super_admin user without admin privileges'}), 403
         
         # Create new user - pass current_user for inheritance (home_health_id, etc.)
         try:
@@ -103,7 +107,12 @@ def register():
         # Log the error for debugging
         import logging
         logging.error(f'Registration error: {str(e)}', exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        # Return a safe error message that won't expose internal details
+        error_message = 'Registration failed. Please check your input and try again.'
+        if os.getenv('FLASK_ENV') != 'production':
+            # In development, include more details
+            error_message = f'Registration error: {str(e)}'
+        return jsonify({'error': error_message}), 500
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -269,11 +278,11 @@ def get_all_users():
             else:
                 # No facility - only themselves
                 query = query.filter_by(id=current_user.id)
-        elif current_user.role_name == 'admin':
-            # Admin users filter by home_health_id if they have one
+        elif current_user.role_name in ['admin', 'super_admin']:
+            # Admin and super_admin users filter by home_health_id if they have one
             if current_user.home_health_id:
                 query = query.filter_by(home_health_id=current_user.home_health_id)
-            # If admin has no home_health_id, they can see all users (super admin)
+            # If admin/super_admin has no home_health_id, they can see all users
         else:
             # Other roles - filter by home_health_id
             if current_user.home_health_id:
@@ -483,12 +492,12 @@ def refresh_token():
 def update_user(user_id):
     """Update user information (admin only)"""
     try:
-        # Check if current user is admin
+        # Check if current user is admin or super_admin
         current_user_id = get_jwt_identity()
         current_user = User.query.get(int(current_user_id))
         
-        if not current_user or current_user.role_name != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
+        if not current_user or current_user.role_name not in ['admin', 'super_admin']:
+            return jsonify({'error': 'Admin or super_admin access required'}), 403
         
         user = User.query.get(user_id)
         if not user:
@@ -630,18 +639,18 @@ def update_user(user_id):
 @auth_bp.route('/users/<int:user_id>', methods=['DELETE'])
 @jwt_required()
 def delete_user(user_id):
-    """Delete user (admin only)"""
+    """Delete user (admin only) - Hard delete"""
     try:
         # Validate user_id
         if user_id is None:
             return jsonify({'error': 'User ID is required'}), 400
         
-        # Check if current user is admin
+        # Check if current user is admin or super_admin
         current_user_id = get_jwt_identity()
         current_user = User.query.get(int(current_user_id))
         
-        if not current_user or current_user.role_name != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
+        if not current_user or current_user.role_name not in ['admin', 'super_admin']:
+            return jsonify({'error': 'Admin or super_admin access required'}), 403
         
         user = User.query.get(user_id)
         if not user:
@@ -651,16 +660,48 @@ def delete_user(user_id):
         if user.id == current_user.id:
             return jsonify({'error': 'Cannot delete your own account'}), 400
         
-        # Soft delete by setting is_active to False
-        user.is_active = False
-        user.updated_at = datetime.utcnow()
+        # Prevent deletion of the default super_admin user (citusflo_admin)
+        if user.username == 'citusflo_admin':
+            return jsonify({'error': 'Cannot delete the default super_admin user'}), 400
+        
+        # Get default admin user for reassigning patients
+        default_admin = User.query.filter_by(username='citusflo_admin').first()
+        if not default_admin:
+            return jsonify({'error': 'Default admin user not found. Cannot safely delete user.'}), 500
+        
+        # Handle related records before deletion
+        
+        # 1. Delete WebAuthn credentials
+        from app.models.webauthn_credential import WebAuthnCredential
+        webauthn_count = WebAuthnCredential.query.filter_by(user_id=user.id).count()
+        if webauthn_count > 0:
+            WebAuthnCredential.query.filter_by(user_id=user.id).delete()
+        
+        # 2. Reassign patients created by this user to default admin
+        from app.models.patient import Patient
+        patient_count = Patient.query.filter_by(created_by=user.id).count()
+        if patient_count > 0:
+            Patient.query.filter_by(created_by=user.id).update({
+                'created_by': default_admin.id
+            }, synchronize_session=False)
+        
+        # 3. Clear foreign key references from other users if this user was referenced
+        # (This shouldn't be needed, but handle just in case)
+        User.query.filter_by(facility_id=user.id).update({'facility_id': None}, synchronize_session=False)
+        User.query.filter_by(home_health_id=user.id).update({'home_health_id': None}, synchronize_session=False)
+        
+        # 4. Hard delete the user
+        db.session.delete(user)
         db.session.commit()
         
         return jsonify({
             'success': True,
-            'message': 'User deleted successfully'
+            'message': f'User deleted successfully. Reassigned {patient_count} patient(s) to default admin.',
+            'reassigned_patients': patient_count,
+            'deleted_webauthn_credentials': webauthn_count
         }), 200
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        return jsonify({'error': f'Failed to delete user: {str(e)}'}), 500

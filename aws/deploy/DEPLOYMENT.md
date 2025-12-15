@@ -206,7 +206,7 @@ Expected response:
 curl https://your-domain.com/api/auth/login \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
+  -d '{"username":"username","password":"password"}'
 
 # Get patients (with JWT token)
 curl https://your-domain.com/api/patients \
@@ -308,14 +308,14 @@ The deployment script automatically initializes the database after the ECS servi
 2. **Creates an admin user** with default credentials
 3. **Sets up the database schema** for the application
 
-### Default Admin Credentials
+### Default Super Admin Credentials
 
 After successful deployment, you can login with:
 
-- **Username**: `admin`
-- **Password**: `admin123`
-- **Email**: `admin@hospital.com`
-- **Role**: `admin`
+- **Username**: `username`
+- **Password**: `password`
+- **Email**: `account@citusflo.com`
+- **Role**: `super_admin`
 
 ### Manual Database Initialization
 
@@ -488,7 +488,7 @@ Your deployment is successful when:
 - ✅ Database connections work
 - ✅ Logs are being generated
 - ✅ Load balancer shows healthy targets
-- ✅ Admin user can login (`admin` / `admin123`)
+- ✅ Super admin user can login (`username` / `password`)
 - ✅ Database tables are created
 
 ---

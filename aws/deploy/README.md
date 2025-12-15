@@ -51,12 +51,12 @@ For deployment issues:
 2. Check `DEPLOYMENT.md` for detailed troubleshooting
 3. Review AWS CloudWatch logs
 
-## 📝 Default Admin Credentials
+## 📝 Default Super Admin Credentials
 
 After successful deployment:
-- **Username**: `admin`
-- **Password**: `admin123`
-- **Email**: `admin@hospital.com`
-- **Role**: `admin`
+- **Username**: `username`
+- **Password**: `password`
+- **Email**: `account@citusflo.com`
+- **Role**: `super_admin`
 
 > ⚠️ **Important**: Change these credentials in production!

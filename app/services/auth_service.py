@@ -100,8 +100,9 @@ class AuthService:
         return user
     
     def authenticate_user(self, username, password):
-        """Authenticate user with username and password"""
-        user = User.query.filter_by(username=username).first()
+        """Authenticate user with username and password (case-insensitive)"""
+        # Case-insensitive username matching for better UX
+        user = User.query.filter(db.func.lower(User.username) == db.func.lower(username)).first()
         
         if user and user.check_password(password):
             return user

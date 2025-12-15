@@ -22,15 +22,46 @@ patient_service = PatientService()
 
 def _transform_patient_to_camel_case(patient):
     """Transform patient to camelCase format for case manager records compatibility"""
-    # Handle forms - ensure it's always a list
-    forms_data = patient.forms if patient.forms is not None else []
-    if isinstance(forms_data, str):
-        try:
-            forms_data = json_module.loads(forms_data)
-        except (json_module.JSONDecodeError, TypeError):
-            forms_data = []
-    if not isinstance(forms_data, list):
-        forms_data = []
+    # Get latest forms per form_type from patient_forms table (no duplicates)
+    latest_forms = patient.get_latest_forms()
+    
+    # Convert to list of dictionaries
+    forms_data = []
+    for form in latest_forms:
+        # Get creator full name if available
+        created_by_name = None
+        if form.creator:
+            # Get full name (first_name + last_name)
+            if form.creator.first_name and form.creator.last_name:
+                created_by_name = f"{form.creator.first_name} {form.creator.last_name}".strip()
+            elif form.creator.first_name:
+                created_by_name = form.creator.first_name
+            elif form.creator.last_name:
+                created_by_name = form.creator.last_name
+            else:
+                created_by_name = form.creator.username  # Fallback to username if no name
+        elif form.created_by:
+            # Fallback: try to get user if relationship not loaded
+            from app.models.user import User
+            creator = User.query.get(form.created_by)
+            if creator:
+                if creator.first_name and creator.last_name:
+                    created_by_name = f"{creator.first_name} {creator.last_name}".strip()
+                elif creator.first_name:
+                    created_by_name = creator.first_name
+                elif creator.last_name:
+                    created_by_name = creator.last_name
+                else:
+                    created_by_name = creator.username  # Fallback to username if no name
+        
+        forms_data.append({
+            'id': form.id,
+            'formId': form.form_id,
+            'formType': form.form_type,
+            'formData': form.form_data,
+            'createdBy': created_by_name,  # Return username instead of ID
+            'createdAt': form.created_at.isoformat() if form.created_at else None
+        })
     
     return {
         'id': str(patient.id),
@@ -41,6 +72,7 @@ def _transform_patient_to_camel_case(patient):
         'facility': patient.facility.to_dict() if patient.facility else None,
         'patientName': patient.patient_name,
         'date': patient.date.isoformat() if patient.date else None,
+        'dateOfBirth': patient.date_of_birth.isoformat() if patient.date_of_birth else None,
         'referralReceived': patient.referral_received,
         'insuranceVerification': patient.insurance_verification,
         'familyAndPatientAware': patient.family_and_patient_aware,
@@ -381,15 +413,13 @@ def update_patient(patient_id):
         if validation_errors:
             return jsonify({'errors': validation_errors}), 400
         
-        # Update patient
-        updated_patient = patient_service.update_patient(patient, data)
+        # Update patient - pass current user ID for form tracking
+        current_user_id = int(user_id)
+        updated_patient = patient_service.update_patient(patient, data, current_user_id=current_user_id)
         
-        # Handle forms if provided
-        if 'forms' in data:
-            if isinstance(data['forms'], list):
-                updated_patient.forms = data['forms']
-            else:
-                updated_patient.forms = []
+        # Forms are now handled by patient_service.update_patient() which saves to patient_forms table
+        # The legacy patient.forms JSON column is no longer used for new forms
+        # Only update it if explicitly needed for backward compatibility
         
         db.session.commit()
         
