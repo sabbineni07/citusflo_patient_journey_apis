@@ -117,11 +117,13 @@ def create_app():
     # Register blueprints
     from app.routes.auth import auth_bp
     from app.routes.patients import patients_bp
+    from app.routes.patient_forms import patient_forms_bp
     from app.routes.facilities import facilities_bp
     from app.routes.webauthn import webauthn_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(patients_bp, url_prefix='/api/patients')
+    app.register_blueprint(patient_forms_bp, url_prefix='/api/patients')  # Shares /api/patients prefix
     app.register_blueprint(facilities_bp, url_prefix='/api/facilities')
     app.register_blueprint(webauthn_bp, url_prefix='/api/auth/webauthn')
     

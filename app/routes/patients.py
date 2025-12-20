@@ -383,21 +383,16 @@ def create_patient():
         if 'home_health_id' not in data and user.home_health_id:
             data['home_health_id'] = user.home_health_id
         
+        # Remove forms from data if present (forms should be managed via independent endpoints)
+        if 'forms' in data:
+            data = {k: v for k, v in data.items() if k != 'forms'}
+        
         # Create new patient
         patient = patient_service.create_patient(data, int(user_id))
         
         # If home_health_id was not set in patient service, set it now
         if not patient.home_health_id and user.home_health_id:
             patient.home_health_id = user.home_health_id
-        
-        # Handle forms if provided
-        if 'forms' in data and data['forms']:
-            if isinstance(data['forms'], list):
-                patient.forms = data['forms']
-            else:
-                patient.forms = []
-        else:
-            patient.forms = []
         
         db.session.commit()
         
@@ -468,6 +463,10 @@ def update_patient(patient_id):
         
         data = request.get_json()
         
+        # Remove forms from data if present (forms should be managed via independent endpoints)
+        if 'forms' in data:
+            data = {k: v for k, v in data.items() if k != 'forms'}
+        
         # Validate input data
         validation_errors = validate_patient_data(data, is_update=True)
         if validation_errors:
@@ -476,13 +475,8 @@ def update_patient(patient_id):
         # Track which fields were changed for audit log
         changed_fields = [key for key in data.keys() if hasattr(patient, key.replace('caseManagerName', 'case_manager_name').replace('phoneNumber', 'phone_number').replace('facilityName', 'facility_name').replace('patientName', 'patient_name'))]
         
-        # Update patient - pass current user ID for form tracking
-        current_user_id = int(user_id)
-        updated_patient = patient_service.update_patient(patient, data, current_user_id=current_user_id)
-        
-        # Forms are now handled by patient_service.update_patient() which saves to patient_forms table
-        # The legacy patient.forms JSON column is no longer used for new forms
-        # Only update it if explicitly needed for backward compatibility
+        # Update patient (forms are managed via independent /api/patients/{id}/forms/ endpoints)
+        updated_patient = patient_service.update_patient(patient, data)
         
         db.session.commit()
         
@@ -550,99 +544,4 @@ def delete_patient(patient_id):
         return jsonify({'error': str(e)}), 500
 
 
-@patients_bp.route('/<int:patient_id>/forms/<int:form_id>', methods=['DELETE'])
-@jwt_required()
-def delete_patient_form(patient_id, form_id):
-    """Delete a patient form by patient_id and form_id - admin and clinician
-    
-    Args:
-        patient_id: Patient ID
-        form_id: Form ID (from patient_forms table)
-    """
-    try:
-        user_id = get_jwt_identity()
-        user = User.query.get(int(user_id))
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        patient = Patient.query.get(patient_id)
-        
-        if not patient:
-            return jsonify({'error': 'Patient not found'}), 404
-        
-        # Check if user can modify this patient (admin and clinician)
-        if not can_modify_patient(user, patient):
-            # Audit log: Access denied
-            AuditService.log_patient_form_access(
-                user_id=user.id,
-                username=user.username,
-                action=AuditActionType.ACCESS_DENIED,
-                form_id=form_id,
-                patient_id=patient_id,
-                success=False,
-                error_message='Access denied - insufficient permissions to delete form'
-            )
-            return jsonify({
-                'error': 'Access denied. You do not have permission to delete forms for this patient.'
-            }), 403
-        
-        # Get the patient form
-        from app.models.patient_form import PatientForm
-        patient_form = PatientForm.query.filter_by(
-            patient_id=patient_id,
-            form_id=form_id
-        ).first()
-        
-        if not patient_form:
-            return jsonify({'error': 'Patient form not found'}), 404
-        
-        # Store form details for audit log before deletion
-        form_type = patient_form.form_type
-        
-        # Delete all versions of this form (all records with this form_id for this patient)
-        deleted_count = PatientForm.query.filter_by(
-            patient_id=patient_id,
-            form_id=form_id
-        ).delete()
-        
-        db.session.commit()
-        
-        # Audit log: Patient form deleted
-        AuditService.log_patient_form_access(
-            user_id=user.id,
-            username=user.username,
-            action=AuditActionType.DELETE,
-            form_id=form_id,
-            patient_id=patient_id,
-            success=True,
-            details={'form_type': form_type, 'deleted_versions': deleted_count}
-        )
-        
-        return jsonify({
-            'message': 'Patient form deleted successfully',
-            'form_id': form_id,
-            'patient_id': patient_id,
-            'deleted_versions': deleted_count
-        }), 200
-        
-    except Exception as e:
-        db.session.rollback()
-        import logging
-        logging.error(f'Error deleting patient form: {str(e)}', exc_info=True)
-        
-        # Audit log: Patient form deletion failed
-        try:
-            AuditService.log_patient_form_access(
-                user_id=user.id if user else None,
-                username=user.username if user else None,
-                action=AuditActionType.DELETE,
-                form_id=form_id,
-                patient_id=patient_id,
-                success=False,
-                error_message=str(e)[:500] if str(e) else 'Unknown error'
-            )
-        except:
-            pass  # Don't fail on audit log errors
-        
-        return jsonify({'error': 'An error occurred while deleting the patient form. Please try again.'}), 500
+# DELETE endpoint moved to app/routes/patient_forms.py for independent CRUD operations

@@ -134,11 +134,8 @@ class PatientService:
                     facility_id = int(facility_id)
                 except (ValueError, TypeError):
                     facility_id = None
-            
-        # Handle forms - will be saved to patient_forms table
-        forms_data = patient_data.get('forms', [])
-        if not isinstance(forms_data, list):
-            forms_data = []
+        
+        # Forms are no longer handled here - use independent /api/patients/{id}/forms/ endpoints
         
         # Handle home_health_id if provided
         home_health_id = patient_data.get('home_health_id')
@@ -168,16 +165,13 @@ class PatientService:
             admitted_datetime=self._parse_datetime(patient_data.get('admittedDatetime')),
             notes=patient_data.get('notes'),
             form_content=patient_data.get('formContent'),
-            forms=forms_data,  # Store forms as JSON
+            forms=[],  # Legacy JSON column - forms should be managed via independent endpoints
             created_by=user_id
         )
         
         # Save patient to database
         db.session.add(patient)
         db.session.flush()  # Flush to get patient.id
-        
-        # Save forms to patient_forms table
-        self._save_forms_to_table(patient.id, forms_data, user_id)
         
         db.session.commit()
         
@@ -308,13 +302,14 @@ class PatientService:
             return patient.get_latest_forms()
         return []
     
-    def update_patient(self, patient, patient_data, current_user_id=None):
+    def update_patient(self, patient, patient_data):
         """Update an existing patient
         
         Args:
             patient: Patient object to update
-            patient_data: Dictionary containing patient data to update
-            current_user_id: User ID of the current user making the update (for form tracking)
+            patient_data: Dictionary containing patient data to update (forms are ignored - use independent endpoints)
+        
+        Note: Forms should be managed via independent /api/patients/{id}/forms/ endpoints
         """
         # Get user object if available for hospital context
         user = None
@@ -396,58 +391,8 @@ class PatientService:
                         patient.home_health_id = None
                 else:
                     patient.home_health_id = None
-            elif key == 'forms':
-                # Handle forms update
-                # If forms array is provided (even if empty), it represents the desired state
-                # Forms not in the array should be deleted
-                if isinstance(value, list):
-                    # Use the current_user_id passed to the method (from the route)
-                    # This ensures we capture the session user who is making the update
-                    user_id_for_forms = current_user_id if current_user_id else None
-                    
-                    # Get current form_ids that should be kept
-                    form_ids_to_keep = set()
-                    if len(value) > 0:
-                        # Extract form_ids from the forms array that should be kept
-                        for form_item in value:
-                            if isinstance(form_item, dict):
-                                form_id = form_item.get('formId') or form_item.get('form_id') or form_item.get('id')
-                                if form_id is not None:
-                                    try:
-                                        # Handle string IDs like 'form-1766197035107'
-                                        if isinstance(form_id, str):
-                                            match = re.search(r'(\d+)$', form_id)
-                                            if match:
-                                                form_id_int = int(match.group(1))
-                                                # Only keep if within INTEGER range
-                                                if form_id_int <= 2147483647 and form_id_int >= -2147483648:
-                                                    form_ids_to_keep.add(form_id_int)
-                                            # If it's a simple integer string, try direct conversion
-                                            elif form_id.isdigit():
-                                                form_id_int = int(form_id)
-                                                if form_id_int <= 2147483647 and form_id_int >= -2147483648:
-                                                    form_ids_to_keep.add(form_id_int)
-                                        else:
-                                            form_id_int = int(form_id)
-                                            if form_id_int <= 2147483647 and form_id_int >= -2147483648:
-                                                form_ids_to_keep.add(form_id_int)
-                                    except (ValueError, TypeError):
-                                        pass  # Skip invalid form_ids
-                    
-                    # Delete forms that are not in the keep list
-                    if form_ids_to_keep:
-                        # Delete forms with form_ids not in the keep list
-                        PatientForm.query.filter(
-                            PatientForm.patient_id == patient.id,
-                            ~PatientForm.form_id.in_(form_ids_to_keep)
-                        ).delete(synchronize_session=False)
-                    else:
-                        # If forms array is empty or no valid form_ids, delete all forms for this patient
-                        PatientForm.query.filter_by(patient_id=patient.id).delete()
-                    
-                    # Save new/updated forms (this will create new versions for existing form_ids)
-                    if len(value) > 0:
-                        self._save_forms_to_table(patient.id, value, created_by=user_id_for_forms)
+            # Forms are no longer handled here - use independent /api/patients/{id}/forms/ endpoints
+            # Ignore 'forms' key if present in patient_data
             elif key == 'active':
                 # Handle active field
                 if value is not None:
