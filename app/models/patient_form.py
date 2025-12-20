@@ -15,7 +15,7 @@ class PatientForm(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     
     # Relationship with patient
-    patient = db.relationship('Patient', backref='form_history', lazy=True)
+    patient = db.relationship('Patient', backref=db.backref('form_history', cascade='all, delete-orphan'), lazy=True)
     
     # Relationship with user who created the form
     creator = db.relationship('User', foreign_keys=[created_by], lazy=True)

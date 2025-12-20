@@ -444,7 +444,10 @@ class PatientService:
         return Patient.query.get(patient_id)
     
     def delete_patient(self, patient):
-        """Delete a patient"""
+        """Delete a patient and all related patient_forms (cascade delete)"""
+        # Explicitly delete patient_forms to ensure proper cascade behavior
+        # This works with the database CASCADE constraint for safety
+        PatientForm.query.filter_by(patient_id=patient.id).delete()
         db.session.delete(patient)
         db.session.commit()
         
