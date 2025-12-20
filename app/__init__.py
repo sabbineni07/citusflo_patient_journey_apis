@@ -48,10 +48,40 @@ def create_app():
     app = Flask(__name__)
     
     # Configuration
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'postgresql://postgres:password@localhost:5432/patient_db')
+    # Configuration - All secrets MUST come from environment variables
+    # Use secure defaults that fail fast if not configured properly
+    secret_key = os.getenv('SECRET_KEY')
+    jwt_secret_key = os.getenv('JWT_SECRET_KEY')
+    database_url = os.getenv('DATABASE_URL')
+    
+    # In production, require all secrets to be set via environment variables
+    if flask_env == 'production':
+        if not secret_key:
+            raise ValueError('SECRET_KEY environment variable is required in production')
+        if not jwt_secret_key:
+            raise ValueError('JWT_SECRET_KEY environment variable is required in production')
+        if not database_url:
+            raise ValueError('DATABASE_URL environment variable is required in production')
+    else:
+        # Development: Use weak defaults with warnings (NOT for production use)
+        if not secret_key:
+            import warnings
+            warnings.warn('SECRET_KEY not set, using insecure default for development only', UserWarning)
+            secret_key = 'dev-secret-key-INSECURE-DO-NOT-USE-IN-PRODUCTION'
+        if not jwt_secret_key:
+            import warnings
+            warnings.warn('JWT_SECRET_KEY not set, using insecure default for development only', UserWarning)
+            jwt_secret_key = 'dev-jwt-secret-key-INSECURE-DO-NOT-USE-IN-PRODUCTION'
+        if not database_url:
+            # Development default - should use .env file
+            database_url = 'postgresql://postgres:CHANGE_ME@localhost:5432/patient_db'
+            import warnings
+            warnings.warn('DATABASE_URL not set, using default. Set via .env file for proper configuration', UserWarning)
+    
+    app.config['SECRET_KEY'] = secret_key
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key')
+    app.config['JWT_SECRET_KEY'] = jwt_secret_key
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 3600))
     
     # Configure logging
@@ -120,28 +150,47 @@ def create_app():
             Role.get_or_create(role_data['name'], role_data['description'])
         print("✅ Roles seeded successfully")
         
-        # # Create default super admin user if it doesn't exist
-        # admin_user = User.query.filter_by(username='citusflo_admin').first()
-        # if not admin_user:
-        #     # Get super_admin role_id
-        #     super_admin_role = Role.query.filter_by(name='super_admin').first()
-        #     if not super_admin_role:
-        #         # If super_admin role doesn't exist, create it
-        #         super_admin_role = Role.get_or_create('super_admin', 'Super Administrator with full system access and management')
-        #
-        #     admin_user = User(
-        #         username='*******',
-        #         email='account@citusflo.com',
-        #         first_name='CitusFlo',
-        #         last_name='Admin',
-        #         role='super_admin',  # Kept for backward compatibility
-        #         role_id=super_admin_role.id  # Set role_id for proper role relationship
-        #     )
-        #     admin_user.set_password('KPS@c1tusfl0')
-        #     db.session.add(admin_user)
-        #     db.session.commit()
-        #     print("Super admin user created: username=*****, password=*******")
-        #     print(f"Super admin user role_id: {super_admin_role.id}")
+        # Create default super admin user if it doesn't exist
+        admin_user = User.query.filter_by(username='citusflo_admin').first()
+        if not admin_user:
+            # Get super_admin role_id
+            super_admin_role = Role.query.filter_by(name='super_admin').first()
+            if not super_admin_role:
+                # If super_admin role doesn't exist, create it
+                super_admin_role = Role.get_or_create('super_admin', 'Super Administrator with full system access and management')
+
+            # Get admin password from environment variable or generate a secure random one
+            admin_password = os.getenv('ADMIN_PASSWORD')
+            if not admin_password:
+                # Generate a secure random password if not provided
+                import secrets
+                import string
+                # Generate a 20-character password with complexity requirements
+                alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+                admin_password = ''.join(secrets.choice(alphabet) for _ in range(20))
+                print("⚠️  WARNING: ADMIN_PASSWORD not set in environment variables")
+                print(f"⚠️  Generated temporary admin password: {admin_password}")
+                print("⚠️  IMPORTANT: Set ADMIN_PASSWORD environment variable and change password after first login!")
+            else:
+                print("✅ Using ADMIN_PASSWORD from environment variable")
+
+            admin_user = User(
+                username='citusflo_admin',
+                email='account@citusflo.com',
+                first_name='CitusFlo',
+                last_name='Admin',
+                role='super_admin',  # Kept for backward compatibility
+                role_id=super_admin_role.id  # Set role_id for proper role relationship
+            )
+            admin_user.set_password(admin_password)
+            db.session.add(admin_user)
+            db.session.commit()
+            print(f"Super admin user created: username=citusflo_admin")
+            print(f"Super admin user role_id: {super_admin_role.id}")
+            if os.getenv('ADMIN_PASSWORD'):
+                print("⚠️  Password set from ADMIN_PASSWORD environment variable (not displayed for security)")
+            else:
+                print(f"⚠️  Temporary password: {admin_password} (CHANGE THIS IMMEDIATELY!)")
         
         print("Database initialized successfully!")
     

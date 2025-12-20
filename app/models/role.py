@@ -42,3 +42,4 @@ class Role(db.Model):
         return f'<Role {self.id}: {self.name}>'
 
 
+

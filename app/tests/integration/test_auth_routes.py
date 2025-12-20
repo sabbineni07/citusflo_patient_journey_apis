@@ -9,7 +9,7 @@ class TestAuthRoutes:
         user_data = {
             'username': 'newuser',
             'email': 'newuser@example.com',
-            'password': 'newpass123',
+            'password': 'NewPass123!@#',
             'first_name': 'New',
             'last_name': 'User'
         }
@@ -28,7 +28,7 @@ class TestAuthRoutes:
         user_data = {
             'username': 'testuser',
             'email': 'test@example.com',
-            'password': 'testpass123',
+            'password': 'TestPass123!@#',
             'first_name': 'Test',
             'last_name': 'User'
         }
@@ -49,7 +49,7 @@ class TestAuthRoutes:
         user_data = {
             'username': 'testuser',
             'email': 'test@example.com',
-            'password': 'testpass123',
+            'password': 'TestPass123!@#',
             'first_name': 'Test',
             'last_name': 'User'
         }
@@ -88,7 +88,7 @@ class TestAuthRoutes:
         user_data = {
             'username': 'testuser',
             'email': 'test@example.com',
-            'password': 'testpass123',
+            'password': 'TestPass123!@#',
             'first_name': 'Test',
             'last_name': 'User'
         }
@@ -97,7 +97,7 @@ class TestAuthRoutes:
         # Login
         login_data = {
             'username': 'testuser',
-            'password': 'testpass123'
+            'password': 'TestPass123!@#'
         }
         
         response = client.post('/api/auth/login', json=login_data)
@@ -169,7 +169,7 @@ class TestAuthRoutes:
         user_data = {
             'username': 'otheruser',
             'email': 'other@example.com',
-            'password': 'otherpass123',
+            'password': 'OtherPass123!@#',
             'first_name': 'Other',
             'last_name': 'User'
         }
@@ -189,7 +189,7 @@ class TestAuthRoutes:
     def test_change_password_success(self, client, auth_headers):
         """Test changing password successfully"""
         password_data = {
-            'current_password': 'testpass123',
+            'current_password': 'TestPass123!@#',
             'new_password': 'newpass123'
         }
         
@@ -215,7 +215,7 @@ class TestAuthRoutes:
     def test_change_password_missing_data(self, client, auth_headers):
         """Test changing password with missing data"""
         password_data = {
-            'current_password': 'testpass123'
+            'current_password': 'TestPass123!@#'
         }
         
         response = client.post('/api/auth/change-password', json=password_data, headers=auth_headers)

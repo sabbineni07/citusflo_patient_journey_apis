@@ -30,14 +30,20 @@ Parameters:
   SecretKey:
     Type: String
     NoEcho: true
-    Description: Flask secret key
-    MinLength: 32
+    Description: Flask secret key (DEPRECATED - now in Secrets Manager, kept for backward compatibility)
+    Default: "DEPRECATED_USE_SECRETS_MANAGER"
   
   JWTSecretKey:
     Type: String
     NoEcho: true
-    Description: JWT secret key
-    MinLength: 32
+    Description: JWT secret key (DEPRECATED - now in Secrets Manager, kept for backward compatibility)
+    Default: "DEPRECATED_USE_SECRETS_MANAGER"
+
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    Description: Admin password (DEPRECATED - now in Secrets Manager, kept for backward compatibility)
+    Default: "DEPRECATED_USE_SECRETS_MANAGER"
 
   # Custom Domain Configuration
   DomainName:
@@ -177,6 +183,17 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
                 Resource: '*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  # Use wildcard to match secrets with random suffix added by AWS
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:citusflo/${Environment}/*-*'
       Tags:
         - Key: Name
           Value: !Sub '${Environment}-ecs-task-role'
@@ -217,12 +234,15 @@ Resources:
               Value: !Ref Environment
             - Name: DATABASE_URL
               Value: !Sub 'postgresql://postgres:${DatabasePassword}@${PatientDatabase.Endpoint.Address}:${PatientDatabase.Endpoint.Port}/patient_journey'
-            - Name: SECRET_KEY
-              Value: !Ref SecretKey
-            - Name: JWT_SECRET_KEY
-              Value: !Ref JWTSecretKey
             - Name: CORS_ORIGINS
               Value: !Sub 'https://app.citusflo.com,https://www.app.citusflo.com,https://${DomainName},https://www.${DomainName}'
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:citusflo/${Environment}/secret-key'
+            - Name: JWT_SECRET_KEY
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:citusflo/${Environment}/jwt-secret-key'
+            - Name: ADMIN_PASSWORD
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:citusflo/${Environment}/admin-password'
           LogConfiguration:
             LogDriver: awslogs
             Options:

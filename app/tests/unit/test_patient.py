@@ -1,6 +1,7 @@
 import pytest
 from app.models.patient import Patient
 from app.services.patient_service import PatientService
+from app import db
 
 class TestPatientService:
     """Test cases for PatientService"""
@@ -8,47 +9,89 @@ class TestPatientService:
     def test_create_patient(self, app):
         """Test patient creation"""
         with app.app_context():
+            from app.models.user import User
+            from app.models.role import Role
+            
+            # Create a user first
+            role = Role.query.filter_by(name='clinician').first()
+            if not role:
+                role = Role(name='clinician', description='Clinician')
+                db.session.add(role)
+                db.session.commit()
+            
+            user = User(
+                username='testuser',
+                email='test@example.com',
+                first_name='Test',
+                last_name='User',
+                role='clinician',
+                role_id=role.id
+            )
+            user.set_password('TestPass123!@#')
+            db.session.add(user)
+            db.session.commit()
+            
             patient_service = PatientService()
             patient_data = {
-                'patient_id': 'PAT-2024-001',
-                'first_name': 'John',
-                'last_name': 'Doe',
-                'date_of_birth': '1990-01-15',
-                'gender': 'Male',
-                'phone': '+1234567890',
-                'email': 'john.doe@example.com',
-                'status': 'active'
+                'patientName': 'John Doe',
+                'caseManagerName': 'Test CM',
+                'phoneNumber': '555-1234',
+                'facilityName': 'Test Facility',
+                'date': '2024-01-01',
+                'dateOfBirth': '1990-01-15',
+                'active': True
             }
             
-            patient = patient_service.create_patient(patient_data, 1)
+            patient = patient_service.create_patient(patient_data, user.id)
             
-            assert patient.patient_id == 'PAT-2024-001'
-            assert patient.first_name == 'John'
-            assert patient.last_name == 'Doe'
-            assert patient.gender == 'Male'
-            assert patient.phone == '+1234567890'
-            assert patient.email == 'john.doe@example.com'
-            assert patient.status == 'active'
-            assert patient.created_by == 1
+            assert patient.patient_name == 'John Doe'
+            assert patient.case_manager_name == 'Test CM'
+            assert patient.phone_number == '555-1234'
+            assert patient.facility_name == 'Test Facility'
+            assert patient.active == True
+            assert patient.created_by == user.id
     
     def test_create_patient_without_id(self, app):
         """Test patient creation without providing patient_id"""
         with app.app_context():
+            from app.models.user import User
+            from app.models.role import Role
+            
+            # Create a user first
+            role = Role.query.filter_by(name='clinician').first()
+            if not role:
+                role = Role(name='clinician', description='Clinician')
+                db.session.add(role)
+                db.session.commit()
+            
+            user = User(
+                username='testuser',
+                email='test@example.com',
+                first_name='Test',
+                last_name='User',
+                role='clinician',
+                role_id=role.id
+            )
+            user.set_password('TestPass123!@#')
+            db.session.add(user)
+            db.session.commit()
+            
             patient_service = PatientService()
             patient_data = {
-                'first_name': 'Jane',
-                'last_name': 'Smith',
-                'date_of_birth': '1985-05-20',
-                'gender': 'Female',
-                'status': 'active'
+                'patientName': 'Jane Smith',
+                'caseManagerName': 'Test CM',
+                'phoneNumber': '555-1234',
+                'facilityName': 'Test Facility',
+                'date': '2024-01-01',
+                'dateOfBirth': '1985-05-20',
+                'active': True
             }
             
-            patient = patient_service.create_patient(patient_data, 1)
+            patient = patient_service.create_patient(patient_data, user.id)
             
-            assert patient.patient_id is not None
-            assert patient.patient_id.startswith('PAT-')
-            assert patient.first_name == 'Jane'
-            assert patient.last_name == 'Smith'
+            assert patient.patient_name == 'Jane Smith'
+            assert patient.case_manager_name == 'Test CM'
+            assert patient.active == True
     
     def test_update_patient(self, app):
         """Test patient update"""

@@ -224,7 +224,8 @@ fix_database_init() {
             
             if [ "$INIT_EXIT_CODE" = "0" ]; then
                 print_success "✅ Database initialized successfully!"
-                print_success "Super admin user created: username=user_name, password=password"
+                print_success "Super admin user created: username=citusflo_admin"
+                print_warning "⚠️  Password set from ADMIN_PASSWORD environment variable or generated (check ECS task logs)"
                 return 0
             else
                 print_error "❌ Database initialization failed with exit code: $INIT_EXIT_CODE"

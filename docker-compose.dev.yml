@@ -5,9 +5,9 @@ services:
     image: postgres:15-alpine
     container_name: citusflo_patient_journey_db_dev
     environment:
-      POSTGRES_DB: patient_db_dev
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-patient_db_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_CHANGE_ME}
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
     ports:
@@ -24,11 +24,12 @@ services:
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=development
-      - SECRET_KEY=dev-secret-key
-      - DATABASE_URL=postgresql://postgres:password@db:5432/patient_db_dev
-      - JWT_SECRET_KEY=dev-jwt-secret-key
-      - JWT_ACCESS_TOKEN_EXPIRES=3600
-      - CORS_ORIGINS=http://localhost:4200,http://localhost:3000,http://127.0.0.1:4200,http://127.0.0.1:3000
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-INSECURE-FOR-DEV-ONLY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-dev_password_CHANGE_ME}@db:5432/${POSTGRES_DB:-patient_db_dev}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-jwt-secret-key-INSECURE-FOR-DEV-ONLY}
+      - JWT_ACCESS_TOKEN_EXPIRES=${JWT_ACCESS_TOKEN_EXPIRES:-3600}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:4200,http://localhost:3000,http://127.0.0.1:4200,http://127.0.0.1:3000}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     ports:
       - "5001:5000"
     depends_on:

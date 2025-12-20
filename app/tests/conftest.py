@@ -7,15 +7,29 @@ from app.models.patient import Patient
 @pytest.fixture
 def app():
     """Create and configure a new app instance for each test."""
+    import os
+    # Force test database configuration
+    os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
+    os.environ['SECRET_KEY'] = 'test-secret-key'
+    os.environ['JWT_SECRET_KEY'] = 'test-jwt-secret-key'
+    os.environ['FLASK_ENV'] = 'testing'
+    
     app = create_app()
     app.config.update({
         "TESTING": True,
         "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
-        "JWT_SECRET_KEY": "test-secret-key"
+        "JWT_SECRET_KEY": "test-secret-key",
+        "SECRET_KEY": "test-secret-key"
     })
     
     with app.app_context():
         db.create_all()
+        # Seed roles for tests
+        from app.models.role import Role
+        Role.get_or_create('super_admin', 'Super Administrator')
+        Role.get_or_create('admin', 'Administrator')
+        Role.get_or_create('clinician', 'Clinician')
+        Role.get_or_create('case_manager', 'Case Manager')
         yield app
         db.drop_all()
 
@@ -36,7 +50,7 @@ def auth_headers(client):
     user_data = {
         'username': 'testuser',
         'email': 'test@example.com',
-        'password': 'testpass123',
+        'password': 'TestPass123!@#',  # HIPAA compliant password
         'first_name': 'Test',
         'last_name': 'User'
     }
@@ -47,7 +61,7 @@ def auth_headers(client):
     # Login and get token
     login_response = client.post('/api/auth/login', json={
         'username': 'testuser',
-        'password': 'testpass123'
+        'password': 'TestPass123!@#'  # HIPAA compliant password
     })
     
     token = login_response.json['access_token']
@@ -75,14 +89,14 @@ def admin_headers(client):
             role='super_admin',  # Backward compatibility string field
             role_id=super_admin_role.id  # Proper role relationship
         )
-        admin_user.set_password('admin123')
+        admin_user.set_password('AdminPass123!@#')  # HIPAA compliant password
         db.session.add(admin_user)
         db.session.commit()
     
     # Login and get token
     login_response = client.post('/api/auth/login', json={
         'username': 'admin',
-        'password': 'admin123'
+        'password': 'AdminPass123!@#'  # HIPAA compliant password
     })
     
     token = login_response.json['access_token']

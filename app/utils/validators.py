@@ -27,15 +27,19 @@ def validate_user_data(data):
         if not re.match(email_pattern, email):
             errors.append('Invalid email format')
     
-    # Password validation
+    # Password validation (HIPAA compliant - strong password requirements)
     if data.get('password'):
         password = data['password']
-        if len(password) < 6:
-            errors.append('Password must be at least 6 characters long')
-        if not re.search(r'[A-Za-z]', password):
-            errors.append('Password must contain at least one letter')
+        if len(password) < 12:
+            errors.append('Password must be at least 12 characters long')
+        if not re.search(r'[a-z]', password):
+            errors.append('Password must contain at least one lowercase letter')
+        if not re.search(r'[A-Z]', password):
+            errors.append('Password must contain at least one uppercase letter')
         if not re.search(r'\d', password):
             errors.append('Password must contain at least one number')
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\'\\:"|,.<>\/?]', password):
+            errors.append('Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)')
     
     # Name validation
     if data.get('first_name') and len(data['first_name']) < 2:

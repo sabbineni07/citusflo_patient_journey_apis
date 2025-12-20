@@ -120,13 +120,100 @@ fi
 print_status "All subnets: $ALL_SUBNETS"
 print_status "ALB subnets: $ALB_SUBNETS"
 
-# Generate secure passwords
-print_status "🔐 Generating secure passwords..."
-DB_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
-SECRET_KEY=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 64)
-JWT_SECRET=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 64)
+# Generate or retrieve secure passwords
+print_status "🔐 Setting up secure passwords..."
 
-print_success "Generated secure credentials"
+# Check for existing database password secret
+OLD_DB_SECRET="production/patient-journey/database-credentials"
+if aws secretsmanager describe-secret --secret-id "$OLD_DB_SECRET" --region $AWS_REGION &>/dev/null 2>&1; then
+    print_status "Found existing database credentials secret, extracting password..."
+    DB_CREDS_JSON=$(aws secretsmanager get-secret-value --secret-id "$OLD_DB_SECRET" --region $AWS_REGION --query SecretString --output text 2>/dev/null)
+    if [ -n "$DB_CREDS_JSON" ]; then
+        DB_PASSWORD=$(echo "$DB_CREDS_JSON" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('password', ''))" 2>/dev/null)
+        if [ -n "$DB_PASSWORD" ]; then
+            print_success "✅ Extracted database password from existing secret (${#DB_PASSWORD} chars)"
+        else
+            print_warning "Could not extract password from JSON, generating new one..."
+            DB_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
+        fi
+    else
+        DB_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
+    fi
+else
+    print_status "No existing database secret found, generating new password..."
+    DB_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
+fi
+
+# Always generate new SECRET_KEY and JWT_SECRET (these are new secrets)
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(64))" 2>/dev/null || head /dev/urandom | tr -dc A-Za-z0-9 | head -c 64)
+JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(64))" 2>/dev/null || head /dev/urandom | tr -dc A-Za-z0-9 | head -c 64)
+
+# Check for existing admin password secret (but generate new one if insecure)
+OLD_ADMIN_SECRET="production/patient-journey/admin-credentials"
+ADMIN_PASSWORD=""
+if [ -z "$ADMIN_PASSWORD" ] && aws secretsmanager describe-secret --secret-id "$OLD_ADMIN_SECRET" --region $AWS_REGION &>/dev/null 2>&1; then
+    print_status "Found existing admin credentials secret, checking password..."
+    ADMIN_CREDS_JSON=$(aws secretsmanager get-secret-value --secret-id "$OLD_ADMIN_SECRET" --region $AWS_REGION --query SecretString --output text 2>/dev/null)
+    if [ -n "$ADMIN_CREDS_JSON" ]; then
+        EXISTING_ADMIN_PASSWORD=$(echo "$ADMIN_CREDS_JSON" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('password', ''))" 2>/dev/null)
+        if [ -n "$EXISTING_ADMIN_PASSWORD" ]; then
+            # Check if password meets HIPAA requirements (12+ chars)
+            if [ ${#EXISTING_ADMIN_PASSWORD} -ge 12 ]; then
+                ADMIN_PASSWORD="$EXISTING_ADMIN_PASSWORD"
+                print_success "✅ Using existing admin password (meets HIPAA requirements, ${#EXISTING_ADMIN_PASSWORD} chars)"
+            else
+                print_warning "Existing admin password (${#EXISTING_ADMIN_PASSWORD} chars) does not meet HIPAA requirements (needs 12+ chars)"
+                print_status "Generating new secure admin password..."
+                ADMIN_PASSWORD=$(python3 -c "import secrets, string; alphabet = string.ascii_letters + string.digits + '!@#$%^&*'; print(''.join(secrets.choice(alphabet) for _ in range(16)))" 2>/dev/null || head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
+            fi
+        fi
+    fi
+fi
+
+# Generate admin password if not set (from environment variable or extracted from existing secret)
+if [ -z "$ADMIN_PASSWORD" ]; then
+    ADMIN_PASSWORD=${ADMIN_PASSWORD:-$(python3 -c "import secrets, string; alphabet = string.ascii_letters + string.digits + '!@#$%^&*'; print(''.join(secrets.choice(alphabet) for _ in range(16)))" 2>/dev/null || head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)}
+fi
+
+print_success "✅ All passwords configured"
+
+# Setup AWS Secrets Manager
+print_status "🔐 Setting up AWS Secrets Manager..."
+ENVIRONMENT="production"
+SECRET_BASE_PATH="citusflo/${ENVIRONMENT}"
+
+# Function to create or update secret
+create_or_update_secret() {
+    local secret_name=$1
+    local secret_value=$2
+    local description=$3
+    
+    if aws secretsmanager describe-secret --secret-id "$secret_name" --region $AWS_REGION &>/dev/null 2>&1; then
+        print_status "Secret '$secret_name' exists, updating..."
+        aws secretsmanager update-secret \
+            --secret-id "$secret_name" \
+            --secret-string "$secret_value" \
+            --region $AWS_REGION > /dev/null
+        print_success "Updated secret: $secret_name"
+    else
+        print_status "Creating secret: $secret_name"
+        aws secretsmanager create-secret \
+            --name "$secret_name" \
+            --secret-string "$secret_value" \
+            --description "$description" \
+            --region $AWS_REGION > /dev/null
+        print_success "Created secret: $secret_name"
+    fi
+}
+
+# Create secrets in Secrets Manager
+create_or_update_secret "${SECRET_BASE_PATH}/secret-key" "$SECRET_KEY" "Flask SECRET_KEY for CitusFlo ${ENVIRONMENT}"
+create_or_update_secret "${SECRET_BASE_PATH}/jwt-secret-key" "$JWT_SECRET" "JWT_SECRET_KEY for CitusFlo ${ENVIRONMENT}"
+create_or_update_secret "${SECRET_BASE_PATH}/admin-password" "$ADMIN_PASSWORD" "Admin password for initial citusflo_admin user in ${ENVIRONMENT}"
+create_or_update_secret "${SECRET_BASE_PATH}/database-password" "$DB_PASSWORD" "Database password for CitusFlo ${ENVIRONMENT} RDS"
+
+print_success "✅ All secrets created/updated in AWS Secrets Manager"
+print_warning "⚠️  Admin password: ${ADMIN_PASSWORD:0:8}... (stored in Secrets Manager, first 8 chars shown)"
 
 # ECR setup - Need to create repo manually before CloudFormation (template references image URI)
 print_status "🐳 Setting up ECR repository..."
@@ -225,14 +312,6 @@ if [ "$CUSTOM_DOMAIN" = "true" ]; then
     "ParameterValue": "$DB_PASSWORD"
   },
   {
-    "ParameterKey": "SecretKey",
-    "ParameterValue": "$SECRET_KEY"
-  },
-  {
-    "ParameterKey": "JWTSecretKey",
-    "ParameterValue": "$JWT_SECRET"
-  },
-  {
     "ParameterKey": "DomainName",
     "ParameterValue": "$API_SUBDOMAIN"
   },
@@ -275,11 +354,15 @@ else
   },
   {
     "ParameterKey": "SecretKey",
-    "ParameterValue": "$SECRET_KEY"
+    "ParameterValue": "DEPRECATED_USE_SECRETS_MANAGER"
   },
   {
     "ParameterKey": "JWTSecretKey",
-    "ParameterValue": "$JWT_SECRET"
+    "ParameterValue": "DEPRECATED_USE_SECRETS_MANAGER"
+  },
+  {
+    "ParameterKey": "AdminPassword",
+    "ParameterValue": "DEPRECATED_USE_SECRETS_MANAGER"
   },
   {
     "ParameterKey": "DomainName",
@@ -432,7 +515,8 @@ INIT_EXIT_CODE=$(aws ecs describe-tasks --region $AWS_REGION --cluster $ECS_CLUS
 
 if [ "$INIT_EXIT_CODE" = "0" ]; then
     print_success "✅ Database initialized successfully!"
-    print_success "Super admin user created: username=username, password=password"
+    print_success "Super admin user created: username=citusflo_admin"
+    print_warning "⚠️  Password set from ADMIN_PASSWORD environment variable or generated (see ECS task logs)"
 else
     print_error "❌ Database initialization failed with exit code: $INIT_EXIT_CODE"
     print_error "Check the logs for details:"
@@ -492,14 +576,15 @@ echo ""
 echo "📝 NEXT STEPS:"
 echo "=============="
 echo "1. Test your application endpoints"
-echo "2. Login with super admin credentials: username / password"
+echo "2. Login with super admin credentials: citusflo_admin"
+echo "   Password: Set via ADMIN_PASSWORD environment variable or generated (check ECS task logs)"
 echo "3. Update your frontend to use HTTPS URLs"
 echo "4. Monitor the deployment"
 echo ""
 echo "🔐 SUPER ADMIN CREDENTIALS:"
 echo "==========================="
-echo "Username: username"
-echo "Password: password"
+echo "Username: citusflo_admin"
+echo "Password: Set via ADMIN_PASSWORD environment variable (check ECS task logs for generated password if not set)"
 echo "Email: account@citusflo.com"
 echo "Role: super_admin"
 echo ""

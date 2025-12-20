@@ -7,6 +7,7 @@ from app.models.hospital import Hospital
 from datetime import datetime
 from sqlalchemy import or_, func, desc
 import uuid
+import re
 
 class PatientService:
     """Service class for patient operations"""
@@ -234,9 +235,46 @@ class PatientService:
             if not isinstance(form_data, dict):
                 form_data = {'value': form_data} if form_data is not None else {}
             
+            # Convert form_id to integer if possible, otherwise set to None (will generate new one)
+            # Handle cases where frontend sends string IDs like 'form-1766197035107'
+            # IMPORTANT: PostgreSQL INTEGER range is -2,147,483,648 to 2,147,483,647
+            # If extracted value exceeds this range, generate a new form_id instead
+            INTEGER_MAX = 2147483647  # PostgreSQL INTEGER maximum value
+            
+            form_id_int = None
+            if form_id is not None:
+                try:
+                    # Try direct conversion
+                    form_id_int = int(form_id)
+                    # Validate it's within INTEGER range
+                    if form_id_int > INTEGER_MAX or form_id_int < -2147483648:
+                        form_id_int = None  # Too large, will generate new one
+                except (ValueError, TypeError):
+                    # If form_id is a string that can't be converted (e.g., 'form-1766197035107'),
+                    # try to extract numeric part if it follows a pattern like 'form-123456'
+                    if isinstance(form_id, str):
+                        # Try to extract number after last dash or underscore
+                        match = re.search(r'(\d+)$', form_id)
+                        if match:
+                            try:
+                                extracted_value = int(match.group(1))
+                                # Validate it's within INTEGER range (frontend timestamps often exceed this)
+                                if extracted_value <= INTEGER_MAX and extracted_value >= -2147483648:
+                                    form_id_int = extracted_value
+                                else:
+                                    # Timestamp-based IDs (like 1766198419087) are too large for INTEGER
+                                    # Generate new form_id instead
+                                    form_id_int = None
+                            except (ValueError, TypeError):
+                                form_id_int = None
+                        else:
+                            form_id_int = None
+                    else:
+                        form_id_int = None
+            
             # Store form by type (overwrite if same type appears multiple times - keep latest)
             forms_by_type[str(form_type)] = {
-                'form_id': int(form_id) if form_id is not None else None,
+                'form_id': form_id_int,
                 'form_type': str(form_type),
                 'form_data': form_data
             }
@@ -359,14 +397,57 @@ class PatientService:
                 else:
                     patient.home_health_id = None
             elif key == 'forms':
-                # Handle forms update - append to patient_forms table (never replace)
-                if isinstance(value, list) and len(value) > 0:
+                # Handle forms update
+                # If forms array is provided (even if empty), it represents the desired state
+                # Forms not in the array should be deleted
+                if isinstance(value, list):
                     # Use the current_user_id passed to the method (from the route)
                     # This ensures we capture the session user who is making the update
                     user_id_for_forms = current_user_id if current_user_id else None
                     
-                    # Append new forms (versioning/history)
-                    self._save_forms_to_table(patient.id, value, created_by=user_id_for_forms)
+                    # Get current form_ids that should be kept
+                    form_ids_to_keep = set()
+                    if len(value) > 0:
+                        # Extract form_ids from the forms array that should be kept
+                        for form_item in value:
+                            if isinstance(form_item, dict):
+                                form_id = form_item.get('formId') or form_item.get('form_id') or form_item.get('id')
+                                if form_id is not None:
+                                    try:
+                                        # Handle string IDs like 'form-1766197035107'
+                                        if isinstance(form_id, str):
+                                            match = re.search(r'(\d+)$', form_id)
+                                            if match:
+                                                form_id_int = int(match.group(1))
+                                                # Only keep if within INTEGER range
+                                                if form_id_int <= 2147483647 and form_id_int >= -2147483648:
+                                                    form_ids_to_keep.add(form_id_int)
+                                            # If it's a simple integer string, try direct conversion
+                                            elif form_id.isdigit():
+                                                form_id_int = int(form_id)
+                                                if form_id_int <= 2147483647 and form_id_int >= -2147483648:
+                                                    form_ids_to_keep.add(form_id_int)
+                                        else:
+                                            form_id_int = int(form_id)
+                                            if form_id_int <= 2147483647 and form_id_int >= -2147483648:
+                                                form_ids_to_keep.add(form_id_int)
+                                    except (ValueError, TypeError):
+                                        pass  # Skip invalid form_ids
+                    
+                    # Delete forms that are not in the keep list
+                    if form_ids_to_keep:
+                        # Delete forms with form_ids not in the keep list
+                        PatientForm.query.filter(
+                            PatientForm.patient_id == patient.id,
+                            ~PatientForm.form_id.in_(form_ids_to_keep)
+                        ).delete(synchronize_session=False)
+                    else:
+                        # If forms array is empty or no valid form_ids, delete all forms for this patient
+                        PatientForm.query.filter_by(patient_id=patient.id).delete()
+                    
+                    # Save new/updated forms (this will create new versions for existing form_ids)
+                    if len(value) > 0:
+                        self._save_forms_to_table(patient.id, value, created_by=user_id_for_forms)
             elif key == 'active':
                 # Handle active field
                 if value is not None:

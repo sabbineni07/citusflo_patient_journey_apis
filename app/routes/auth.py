@@ -4,6 +4,8 @@ from app import db, limiter
 from app.models.user import User
 from app.models.role import Role
 from app.services.auth_service import AuthService
+from app.services.audit_service import AuditService
+from app.models.audit_log import AuditActionType, AuditResourceType
 from app.utils.validators import validate_user_data, validate_login_data
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
@@ -37,9 +39,7 @@ def register():
         email_to_check = data['email'].strip().lower() if data.get('email') else ''
         existing_email = User.query.filter(db.func.lower(User.email) == db.func.lower(email_to_check)).first()
         if existing_email:
-            # Log for debugging (don't expose existing user's email in production)
-            import logging
-            logging.info(f'Registration attempted with existing email: {email_to_check}')
+            # Don't log email addresses (PHI) - audit logging handles this properly
             return jsonify({
                 'error': 'Email already exists. Please use a different email address.',
                 'hint': 'If you believe this is an error, the email may already be registered. Try logging in instead.'
@@ -71,6 +71,16 @@ def register():
         # Create new user - pass current_user for inheritance (home_health_id, etc.)
         try:
             user = auth_service.create_user(data, created_by_user=current_user)
+            
+            # Audit log: User created
+            AuditService.log_user_management(
+                user_id=current_user.id if current_user else None,
+                username=current_user.username if current_user else 'system',
+                action=AuditActionType.USER_CREATED,
+                target_user_id=user.id,
+                success=True,
+                details={'created_username': user.username, 'role': user.role_name}
+            )
         except IntegrityError as e:
             # Handle database unique constraint violations
             db.session.rollback()
@@ -104,15 +114,11 @@ def register():
         
     except Exception as e:
         db.session.rollback()
-        # Log the error for debugging
+        # Log generic error without exposing details (audit logs handle specific tracking)
         import logging
-        logging.error(f'Registration error: {str(e)}', exc_info=True)
-        # Return a safe error message that won't expose internal details
-        error_message = 'Registration failed. Please check your input and try again.'
-        if os.getenv('FLASK_ENV') != 'production':
-            # In development, include more details
-            error_message = f'Registration error: {str(e)}'
-        return jsonify({'error': error_message}), 500
+        logging.error('Registration error occurred', exc_info=True)
+        # Generic error response - don't expose internal details
+        return jsonify({'error': 'Registration failed. Please try again.'}), 500
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -141,15 +147,36 @@ def login():
         user = auth_service.authenticate_user(username, password)
         
         if not user:
-            # Log for debugging (don't expose which part failed for security)
-            import logging
-            logging.warning(f'Failed login attempt for username: {username}')
+            # Audit log: Failed login attempt (proper audit logging - no PHI in logs)
+            AuditService.log_authentication(
+                user_id=None,
+                username=username,
+                action=AuditActionType.LOGIN_FAILED,
+                success=False,
+                error_message='Invalid credentials'
+            )
+            # Don't log usernames in application logs - audit logs handle this properly
             return jsonify({'error': 'Invalid credentials'}), 401
         
         if not user.is_active:
-            import logging
-            logging.warning(f'Login attempt for inactive account: {username}')
+            # Audit log: Login attempt for inactive account (proper audit logging)
+            AuditService.log_authentication(
+                user_id=user.id,
+                username=username,
+                action=AuditActionType.LOGIN_FAILED,
+                success=False,
+                error_message='Account is deactivated'
+            )
+            # Don't log usernames in application logs - audit logs handle this properly
             return jsonify({'error': 'Account is deactivated. Please contact administrator.'}), 401
+        
+        # Audit log: Successful login
+        AuditService.log_authentication(
+            user_id=user.id,
+            username=username,
+            action=AuditActionType.LOGIN,
+            success=True
+        )
         
         # Create access token
         access_token = create_access_token(identity=str(user.id))
@@ -235,11 +262,42 @@ def change_password():
         
         # Verify current password
         if not user.check_password(data['current_password']):
+            # Audit log: Failed password change (incorrect current password)
+            AuditService.log_authentication(
+                user_id=user.id,
+                username=user.username,
+                action=AuditActionType.PASSWORD_CHANGE,
+                success=False,
+                error_message='Incorrect current password'
+            )
             return jsonify({'error': 'Current password is incorrect'}), 400
+        
+        # Validate new password strength
+        from app.utils.validators import validate_user_data
+        validation_errors = validate_user_data({'password': data['new_password'], 'username': user.username, 'email': user.email, 'first_name': user.first_name, 'last_name': user.last_name})
+        password_errors = [err for err in validation_errors if 'password' in err.lower()]
+        if password_errors:
+            # Audit log: Failed password change (weak password)
+            AuditService.log_authentication(
+                user_id=user.id,
+                username=user.username,
+                action=AuditActionType.PASSWORD_CHANGE,
+                success=False,
+                error_message='New password does not meet requirements'
+            )
+            return jsonify({'errors': password_errors}), 400
         
         # Set new password
         user.set_password(data['new_password'])
         db.session.commit()
+        
+        # Audit log: Successful password change
+        AuditService.log_authentication(
+            user_id=user.id,
+            username=user.username,
+            action=AuditActionType.PASSWORD_CHANGE,
+            success=True
+        )
         
         return jsonify({
             'message': 'Password changed successfully'

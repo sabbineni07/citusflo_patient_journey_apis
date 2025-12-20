@@ -54,8 +54,8 @@ For deployment issues:
 ## 📝 Default Super Admin Credentials
 
 After successful deployment:
-- **Username**: `username`
-- **Password**: `password`
+- **Username**: `citusflo_admin`
+- **Password**: Set via `ADMIN_PASSWORD` environment variable in ECS task definition, or auto-generated (check ECS task logs)
 - **Email**: `account@citusflo.com`
 - **Role**: `super_admin`
 

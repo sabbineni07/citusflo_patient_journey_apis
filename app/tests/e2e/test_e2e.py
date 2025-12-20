@@ -18,7 +18,7 @@ class TestE2E:
         user_data = {
             'username': 'e2euser',
             'email': 'e2e@example.com',
-            'password': 'e2epass123',
+            'password': 'E2EPass123!@#',
             'first_name': 'E2E',
             'last_name': 'User'
         }
@@ -29,7 +29,7 @@ class TestE2E:
         # Login to get token
         login_data = {
             'username': 'e2euser',
-            'password': 'e2epass123'
+            'password': 'E2EPass123!@#'
         }
         
         response = requests.post(f"{base_url}/api/auth/login", json=login_data)
@@ -155,7 +155,7 @@ class TestE2E:
         
         # 3. Change password
         password_data = {
-            'current_password': 'e2epass123',
+            'current_password': 'E2EPass123!@#',
             'new_password': 'newe2epass123'
         }
         
@@ -165,7 +165,7 @@ class TestE2E:
         # 4. Login with new password
         login_data = {
             'username': 'e2euser',
-            'password': 'newe2epass123'
+            'password': 'NewE2EPass123!@#'
         }
         
         response = requests.post(f"{base_url}/api/auth/login", json=login_data)
@@ -203,7 +203,7 @@ class TestE2E:
         user_data = {
             'username': 'erroruser',
             'email': 'error@example.com',
-            'password': 'errorpass123',
+            'password': 'ErrorPass123!@#',
             'first_name': 'Error',
             'last_name': 'User'
         }
@@ -212,7 +212,7 @@ class TestE2E:
         
         login_data = {
             'username': 'erroruser',
-            'password': 'errorpass123'
+            'password': 'ErrorPass123!@#'
         }
         
         response = requests.post(f"{base_url}/api/auth/login", json=login_data)

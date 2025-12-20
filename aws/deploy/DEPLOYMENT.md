@@ -206,7 +206,7 @@ Expected response:
 curl https://your-domain.com/api/auth/login \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"username":"username","password":"password"}'
+  -d '{"username":"citusflo_admin","password":"<password-from-ADMIN_PASSWORD-env-var>"}'
 
 # Get patients (with JWT token)
 curl https://your-domain.com/api/patients \
@@ -312,8 +312,8 @@ The deployment script automatically initializes the database after the ECS servi
 
 After successful deployment, you can login with:
 
-- **Username**: `username`
-- **Password**: `password`
+- **Username**: `citusflo_admin`
+- **Password**: Set via `ADMIN_PASSWORD` environment variable in ECS task definition, or auto-generated (check ECS task logs)
 - **Email**: `account@citusflo.com`
 - **Role**: `super_admin`
 
@@ -488,7 +488,7 @@ Your deployment is successful when:
 - ✅ Database connections work
 - ✅ Logs are being generated
 - ✅ Load balancer shows healthy targets
-- ✅ Super admin user can login (`username` / `password`)
+- ✅ Super admin user can login (`citusflo_admin` / password from `ADMIN_PASSWORD` env var)
 - ✅ Database tables are created
 
 ---
