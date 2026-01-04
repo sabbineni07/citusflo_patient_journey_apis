@@ -152,17 +152,17 @@ class PatientService:
             facility_id=facility_id,
             home_health_id=home_health_id,
             patient_name=patient_data['patientName'],
-            date=datetime.strptime(patient_data['date'], '%Y-%m-%d').date(),
+            date=self._parse_date(patient_data['date']),
             date_of_birth=self._parse_date(patient_data.get('dateOfBirth')),
             referral_received=patient_data.get('referralReceived', False),
             insurance_verification=patient_data.get('insuranceVerification', False),
-            family_and_patient_aware=patient_data.get('familyAndPatientAware', False),
-            in_person_visit=patient_data.get('inPersonVisit', False),
-            discharged_from_facility=patient_data.get('dischargedFromFacility', False),
-            admitted=patient_data.get('admitted', False),
-            care_follow_up=patient_data.get('careFollowUp', False),
-            active=patient_data.get('active', True),
+            contact_made=patient_data.get('contactMade', False),
+            clinical_liaison_visit=patient_data.get('clinicalLiaisonVisit', False),
+            discharged_from_facility=self._parse_datetime(patient_data.get('dischargedFromFacility')),
             admitted_datetime=self._parse_datetime(patient_data.get('admittedDatetime')),
+            soc_1week_followup=patient_data.get('soc1WeekFollowup', False),
+            patient_accepted=patient_data.get('patientAccepted'),
+            active=patient_data.get('active', True),
             notes=patient_data.get('notes'),
             form_content=patient_data.get('formContent'),
             forms=[],  # Legacy JSON column - forms should be managed via independent endpoints
@@ -345,10 +345,9 @@ class PatientService:
             'patientName': 'patient_name',
             'referralReceived': 'referral_received',
             'insuranceVerification': 'insurance_verification',
-            'familyAndPatientAware': 'family_and_patient_aware',
-            'inPersonVisit': 'in_person_visit',
-            'dischargedFromFacility': 'discharged_from_facility',
-            'careFollowUp': 'care_follow_up',
+            'contactMade': 'contact_made',
+            'clinicalLiaisonVisit': 'clinical_liaison_visit',
+            'soc1WeekFollowup': 'soc_1week_followup',
             'formContent': 'form_content'
         }
         
@@ -397,13 +396,18 @@ class PatientService:
                 # Handle active field
                 if value is not None:
                     patient.active = bool(value)
-            elif key == 'admitted':
-                # Handle admitted field (boolean, no camelCase conversion needed)
-                if value is not None:
-                    patient.admitted = bool(value)
+            elif key == 'dischargedFromFacility':
+                # Handle discharged_from_facility field (datetime)
+                patient.discharged_from_facility = self._parse_datetime(value)
             elif key == 'admittedDatetime':
                 # Handle admitted_datetime field
                 patient.admitted_datetime = self._parse_datetime(value)
+            elif key == 'patientAccepted':
+                # Handle patient_accepted field (boolean, nullable)
+                if value is not None:
+                    patient.patient_accepted = bool(value)
+                else:
+                    patient.patient_accepted = None
             elif key == 'notes':
                 # Handle notes field
                 patient.notes = value if value else None

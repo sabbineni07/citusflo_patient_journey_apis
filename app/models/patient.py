@@ -16,13 +16,13 @@ class Patient(db.Model):
     date_of_birth = db.Column(db.Date, nullable=True)
     referral_received = db.Column(db.Boolean, default=False)
     insurance_verification = db.Column(db.Boolean, default=False)
-    family_and_patient_aware = db.Column(db.Boolean, default=False)
-    in_person_visit = db.Column(db.Boolean, default=False)
-    discharged_from_facility = db.Column(db.Boolean, default=False)
-    admitted = db.Column(db.Boolean, default=False)
-    care_follow_up = db.Column(db.Boolean, default=False)
+    contact_made = db.Column(db.Boolean, default=False)  # Made contact with patient/family
+    clinical_liaison_visit = db.Column(db.Boolean, default=False)  # Clinical liaison visit
+    discharged_from_facility = db.Column(db.DateTime, nullable=True)  # Discharged from facility datetime
+    admitted_datetime = db.Column(db.DateTime, nullable=True)  # Admitted datetime
+    soc_1week_followup = db.Column(db.Boolean, default=False)  # SOC 1 week follow up
+    patient_accepted = db.Column(db.Boolean, nullable=True)  # Patient Accepted / Patient declined
     active = db.Column(db.Boolean, default=True, nullable=False)
-    admitted_datetime = db.Column(db.DateTime, nullable=True)
     notes = db.Column(db.Text, nullable=True)
     form_content = db.Column(db.Text)
     forms = db.Column(db.JSON, default=list)  # JSON field to store array of forms
@@ -134,13 +134,13 @@ class Patient(db.Model):
             'dateOfBirth': self.date_of_birth.isoformat() if self.date_of_birth else None,
             'referralReceived': self.referral_received,
             'insuranceVerification': self.insurance_verification,
-            'familyAndPatientAware': self.family_and_patient_aware,
-            'inPersonVisit': self.in_person_visit,
-            'dischargedFromFacility': self.discharged_from_facility,
-            'admitted': self.admitted,
-            'careFollowUp': self.care_follow_up,
-            'active': self.active,
+            'contactMade': self.contact_made,
+            'clinicalLiaisonVisit': self.clinical_liaison_visit,
+            'dischargedFromFacility': self.discharged_from_facility.isoformat() if self.discharged_from_facility else None,
             'admittedDatetime': self.admitted_datetime.isoformat() if self.admitted_datetime else None,
+            'soc1WeekFollowup': self.soc_1week_followup,
+            'patientAccepted': self.patient_accepted,
+            'active': self.active,
             'notes': self.notes,
             'formContent': self.form_content,
             'forms': forms_data,  # Include forms array

@@ -77,13 +77,13 @@ def _transform_patient_to_camel_case(patient):
         'dateOfBirth': patient.date_of_birth.isoformat() if patient.date_of_birth else None,
         'referralReceived': patient.referral_received,
         'insuranceVerification': patient.insurance_verification,
-        'familyAndPatientAware': patient.family_and_patient_aware,
-        'inPersonVisit': patient.in_person_visit,
-        'dischargedFromFacility': patient.discharged_from_facility,
-        'admitted': patient.admitted,
-        'careFollowUp': patient.care_follow_up,
-        'active': patient.active,
+        'contactMade': patient.contact_made,
+        'clinicalLiaisonVisit': patient.clinical_liaison_visit,
+        'dischargedFromFacility': patient.discharged_from_facility.isoformat() if patient.discharged_from_facility else None,
         'admittedDatetime': patient.admitted_datetime.isoformat() if patient.admitted_datetime else None,
+        'soc1WeekFollowup': patient.soc_1week_followup,
+        'patientAccepted': patient.patient_accepted,
+        'active': patient.active,
         'notes': patient.notes,
         'formContent': patient.form_content,
         'forms': forms_data,
@@ -320,21 +320,21 @@ def get_patient_stats():
         total_records = query.count()
         referral_received = query.filter(Patient.referral_received == True).count()
         insurance_verified = query.filter(Patient.insurance_verification == True).count()
-        family_aware = query.filter(Patient.family_and_patient_aware == True).count()
-        in_person_visits = query.filter(Patient.in_person_visit == True).count()
-        discharged = query.filter(Patient.discharged_from_facility == True).count()
-        admitted = query.filter(Patient.admitted == True).count()
-        care_follow_up = query.filter(Patient.care_follow_up == True).count()
+        contact_made = query.filter(Patient.contact_made == True).count()
+        clinical_liaison_visits = query.filter(Patient.clinical_liaison_visit == True).count()
+        discharged = query.filter(Patient.discharged_from_facility.isnot(None)).count()
+        admitted = query.filter(Patient.admitted_datetime.isnot(None)).count()
+        soc_1week_followup = query.filter(Patient.soc_1week_followup == True).count()
         
         stats = {
             'total_records': total_records,
             'referral_received': referral_received,
             'insurance_verified': insurance_verified,
-            'family_aware': family_aware,
-            'in_person_visits': in_person_visits,
+            'contact_made': contact_made,
+            'clinical_liaison_visits': clinical_liaison_visits,
             'discharged': discharged,
             'admitted': admitted,
-            'care_follow_up': care_follow_up,
+            'soc_1week_followup': soc_1week_followup,
             'referral_rate': round((referral_received / total_records * 100) if total_records > 0 else 0, 2),
             'insurance_verification_rate': round((insurance_verified / total_records * 100) if total_records > 0 else 0, 2),
             'admission_rate': round((admitted / total_records * 100) if total_records > 0 else 0, 2)

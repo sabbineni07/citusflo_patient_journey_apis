@@ -37,7 +37,6 @@ class TestNewPatientFields:
                 'phoneNumber': '555-1234',
                 'facilityName': 'Test Facility',
                 'date': '2024-01-01',
-                'admitted': True,
                 'admittedDatetime': '2024-01-15T10:30:00Z'
             }
             
@@ -47,7 +46,6 @@ class TestNewPatientFields:
             patient_id = response.get_json()['patient']['id']
             patient = Patient.query.get(patient_id)
             
-            assert patient.admitted == True
             assert patient.admitted_datetime is not None
             assert isinstance(patient.admitted_datetime, datetime)
     
@@ -133,13 +131,11 @@ class TestNewPatientFields:
             
             # Update admitted_datetime
             update_data = {
-                'admitted': True,
                 'admittedDatetime': '2024-01-20T14:30:00Z'
             }
             client.put(f'/api/patients/{patient_id}', json=update_data, headers=auth_headers)
             
             patient = Patient.query.get(patient_id)
-            assert patient.admitted == True
             assert patient.admitted_datetime is not None
     
     def test_update_patient_notes(self, client, auth_headers):
@@ -198,7 +194,6 @@ class TestNewPatientFields:
                 'facilityName': 'Test Facility',
                 'date': '2024-01-01',
                 'active': True,
-                'admitted': True,
                 'admittedDatetime': '2024-01-15T10:30:00Z',
                 'notes': 'Test notes',
                 'dateOfBirth': '1990-05-15'
@@ -222,5 +217,6 @@ class TestNewPatientFields:
             assert patient_data['notes'] == 'Test notes'
             assert 'dateOfBirth' in patient_data
             assert patient_data['dateOfBirth'] == '1990-05-15'
+
 
 
